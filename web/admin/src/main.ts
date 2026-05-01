@@ -1,6 +1,7 @@
 import './styles.css'
 
 type MessageKind = '' | 'ok' | 'bad'
+type AdminView = 'main' | 'settings'
 
 interface LicenseRecord {
   id: string
@@ -77,6 +78,7 @@ interface AdminState {
   licenseHasMore: boolean
   licenseSearch: string
   runtimeSettings: RuntimeSettings
+  view: AdminView
 }
 
 const state: AdminState = {
@@ -97,6 +99,7 @@ const state: AdminState = {
     imageProviderDefaultConcurrency: 2,
     upstreamTimeoutSeconds: 600,
   },
+  view: 'main',
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -120,7 +123,7 @@ app.innerHTML = `
         </div>
       </div>
       <div class="header-actions">
-        <div id="authStatus" class="status"><span class="dot"></span><span>未登录</span></div>
+        <button id="settingsButton" type="button" hidden>设置</button>
         <button id="headerLogoutButton" type="button" hidden>退出登录</button>
       </div>
     </header>
@@ -160,22 +163,6 @@ app.innerHTML = `
               </div>
               <div id="licenseMessage" class="message"></div>
               <div id="createdKeys" class="created-list" hidden></div>
-            </form>
-          </div>
-        </section>
-        <section>
-          <div class="section-head"><h2>运行设置</h2></div>
-          <div class="body">
-            <form id="runtimeSettingsForm" class="form">
-              <label>全局生图并发<input name="imageGlobalConcurrency" type="number" min="1" max="100" value="6"></label>
-              <label>默认服务商并发<input name="imageProviderDefaultConcurrency" type="number" min="1" max="100" value="2"></label>
-              <label>上游超时秒数<input name="upstreamTimeoutSeconds" type="number" min="60" max="1800" value="600"></label>
-              <p class="hint">这些设置保存在数据库，不需要改 ENV。全局生图并发限制同时连到上游的同步生图任务总数；服务商可单独覆盖并发，填 0 时使用默认服务商并发；上游超时用于一次同步生成和取图。</p>
-              <div class="actions">
-                <button class="primary" type="submit">保存运行设置</button>
-                <button id="refreshRuntimeSettings" type="button">刷新</button>
-              </div>
-              <div id="runtimeSettingsMessage" class="message"></div>
             </form>
           </div>
         </section>
@@ -265,17 +252,42 @@ app.innerHTML = `
         </section>
       </div>
     </div>
+
+    <div id="settingsView" class="settings-view" hidden>
+      <section>
+        <div class="section-head">
+          <h2>设置</h2>
+          <div class="section-actions">
+            <button id="settingsBackButton" type="button">返回</button>
+            <button id="refreshRuntimeSettings" type="button">刷新</button>
+          </div>
+        </div>
+        <div class="body">
+          <form id="runtimeSettingsForm" class="form">
+            <label>全局生图并发<input name="imageGlobalConcurrency" type="number" min="1" max="100" value="6"></label>
+            <label>默认服务商并发<input name="imageProviderDefaultConcurrency" type="number" min="1" max="100" value="2"></label>
+            <label>上游超时秒数<input name="upstreamTimeoutSeconds" type="number" min="60" max="1800" value="600"></label>
+            <div class="actions">
+              <button class="primary" type="submit">保存运行设置</button>
+            </div>
+            <div id="runtimeSettingsMessage" class="message"></div>
+          </form>
+        </div>
+      </section>
+    </div>
   </div>
 `
 
 const els = {
   loginPanel: mustGet<HTMLDivElement>('loginPanel'),
   adminGrid: mustGet<HTMLDivElement>('adminGrid'),
+  settingsView: mustGet<HTMLDivElement>('settingsView'),
   loginForm: mustGet<HTMLFormElement>('loginForm'),
   adminPassword: mustGet<HTMLInputElement>('adminPassword'),
   loginMessage: mustGet<HTMLDivElement>('loginMessage'),
+  settingsButton: mustGet<HTMLButtonElement>('settingsButton'),
+  settingsBackButton: mustGet<HTMLButtonElement>('settingsBackButton'),
   headerLogoutButton: mustGet<HTMLButtonElement>('headerLogoutButton'),
-  authStatus: mustGet<HTMLDivElement>('authStatus'),
   licenseForm: mustGet<HTMLFormElement>('licenseForm'),
   licenseMessage: mustGet<HTMLDivElement>('licenseMessage'),
   copyCreatedKeys: mustGet<HTMLButtonElement>('copyCreatedKeys'),
@@ -305,7 +317,6 @@ const els = {
 }
 
 setAdminVisible(Boolean(state.token))
-updateAuthStatus(false)
 renderCreatedKeys()
 renderLicenses()
 renderProfiles()
@@ -356,15 +367,22 @@ function message(el: HTMLElement, text: string, kind: MessageKind = ''): void {
 
 function setAdminVisible(visible: boolean): void {
   els.loginPanel.hidden = visible
-  els.adminGrid.hidden = !visible
+  els.settingsButton.hidden = !visible
   els.headerLogoutButton.hidden = !visible
+  if (visible) {
+    showAdminView(state.view)
+  } else {
+    els.adminGrid.hidden = true
+    els.settingsView.hidden = true
+  }
 }
 
-function updateAuthStatus(ok: boolean): void {
-  const text = state.token ? (ok ? '已登录' : '正在验证') : '未登录'
-  els.authStatus.className = `status${ok ? ' ok' : state.token ? '' : ' bad'}`
-  const label = els.authStatus.querySelector('span:last-child')
-  if (label) label.textContent = text
+function showAdminView(view: AdminView): void {
+  state.view = view
+  const visible = Boolean(state.token)
+  els.adminGrid.hidden = !visible || view !== 'main'
+  els.settingsView.hidden = !visible || view !== 'settings'
+  els.settingsButton.classList.toggle('active', visible && view === 'settings')
 }
 
 function authHeaders(): Record<string, string> {
@@ -522,9 +540,8 @@ async function loadRuntimeSettings(): Promise<void> {
 }
 
 async function refreshAll(): Promise<void> {
-  await Promise.all([loadLicenses(), loadProfiles(), loadRuntimeSettings()])
+  await Promise.all([loadLicenses(), loadProfiles()])
   setAdminVisible(true)
-  updateAuthStatus(true)
 }
 
 function setProfileFormVisible(visible: boolean): void {
@@ -576,8 +593,8 @@ function logout(): void {
   state.createdKeys = []
   localStorage.removeItem('lillian-admin-token')
   els.adminPassword.value = ''
+  state.view = 'main'
   setAdminVisible(false)
-  updateAuthStatus(false)
   renderCreatedKeys()
   message(els.loginMessage, '')
 }
@@ -591,8 +608,8 @@ function bindEvents(): void {
       return
     }
     state.token = password
+    state.view = 'main'
     setAdminVisible(true)
-    updateAuthStatus(false)
     try {
       await refreshAll()
       localStorage.setItem('lillian-admin-token', state.token)
@@ -602,9 +619,17 @@ function bindEvents(): void {
       state.token = ''
       localStorage.removeItem('lillian-admin-token')
       setAdminVisible(false)
-      updateAuthStatus(false)
       message(els.loginMessage, (error as Error).message, 'bad')
     }
+  })
+
+  els.settingsButton.addEventListener('click', () => {
+    showAdminView('settings')
+    loadRuntimeSettings().catch((error: Error) => message(els.runtimeSettingsMessage, error.message, 'bad'))
+  })
+
+  els.settingsBackButton.addEventListener('click', () => {
+    showAdminView('main')
   })
 
   els.headerLogoutButton.addEventListener('click', logout)
