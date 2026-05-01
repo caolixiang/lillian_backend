@@ -172,10 +172,10 @@ app.innerHTML = `
                 <form id="profileForm" class="form">
                   <input name="id" type="hidden">
                   <div class="columns">
-                    <label>名称<input name="label" placeholder="BLTCY 1K"></label>
+                    <label>名称<input name="label" placeholder="OpenAI Compatible HD"></label>
                     <label>桶<select name="tierBucket"><option value="1k">1K</option><option value="hd">HD</option></select></label>
                   </div>
-                  <label>Base URL<input name="apiBaseUrl" placeholder="https://api.example.com"></label>
+                  <label>Base URL<input name="apiBaseUrl" placeholder="https://api.openai.com/v1"></label>
                   <label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="更新时留空表示沿用原密钥"></label>
                   <div class="columns">
                     <label>优先级<input name="priority" type="number" min="1" value="100"></label>
