@@ -1,0 +1,693 @@
+import './styles.css'
+
+type MessageKind = '' | 'ok' | 'bad'
+
+interface LicenseRecord {
+  id: string
+  key?: string
+  tier: string
+  total_credits: number
+  remaining_credits: number
+  max_concurrent: number
+  expires_at?: string | null
+  note?: string
+}
+
+interface ServiceProfile {
+  id: string
+  label: string
+  tierBucket: '1k' | 'hd' | string
+  apiBaseUrl: string
+  model: string
+  apiMode: string
+  priority: number
+  status: string
+  hasApiKey: boolean
+}
+
+interface CreateLicenseResponse {
+  keys: Array<{
+    id: string
+    key: string
+    tier: string
+    totalCredits: number
+    maxConcurrent: number
+    note?: string
+  }>
+}
+
+interface LicenseListResponse {
+  licenses: LicenseRecord[]
+}
+
+interface ServiceProfileListResponse {
+  serviceProfiles: ServiceProfile[]
+}
+
+interface AdminState {
+  token: string
+  profiles: ServiceProfile[]
+  licenses: LicenseRecord[]
+  createdKeys: CreateLicenseResponse['keys']
+  editingProfileId: string
+  editingLicenseNoteId: string
+  lastSelectedLicenseId: string
+  selectedLicenseIds: string[]
+}
+
+const state: AdminState = {
+  token: localStorage.getItem('lillian-admin-token') || '',
+  profiles: [],
+  licenses: [],
+  createdKeys: [],
+  editingProfileId: '',
+  editingLicenseNoteId: '',
+  lastSelectedLicenseId: '',
+  selectedLicenseIds: [],
+}
+
+const app = document.querySelector<HTMLDivElement>('#app')
+
+if (!app) {
+  throw new Error('Admin root element is missing')
+}
+
+app.innerHTML = `
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <img class="mark" src="/lillian-icon.svg" alt="">
+        <div>
+          <h1>莉莉安的后台</h1>
+          <div class="subtitle">Lillian's Canvas Admin</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div id="authStatus" class="status"><span class="dot"></span><span>未登录</span></div>
+        <button id="headerLogoutButton" type="button" hidden>退出登录</button>
+      </div>
+    </header>
+
+    <div id="loginPanel" class="login-panel">
+      <section class="login-card">
+        <div class="section-head"><h2>管理员登录</h2></div>
+        <div class="body">
+          <form id="loginForm" class="form">
+            <label>管理员密码<input id="adminPassword" type="password" autocomplete="current-password" placeholder="输入管理员密码"></label>
+            <div class="actions"><button class="primary" type="submit">进入后台</button></div>
+            <div id="loginMessage" class="message"></div>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <div id="adminGrid" class="grid" hidden>
+      <div class="stack">
+        <section>
+          <div class="section-head"><h2>生成兑换码</h2></div>
+          <div class="body">
+            <form id="licenseForm" class="form">
+              <div class="columns">
+                <label>类型<select name="tier"><option value="basic">普通 1K</option><option value="hd">高清 2K/4K</option></select></label>
+                <label>数量<input name="count" type="number" min="1" max="100" value="1"></label>
+              </div>
+              <div class="columns">
+                <label>每个密匙次数<input name="totalCredits" type="number" min="1" value="5"></label>
+                <label>最大并发<input name="maxConcurrent" type="number" min="1" value="6"></label>
+              </div>
+              <label>备注 / 发放对象<input name="note" placeholder="例如：Alice / 订单号 / 渠道"></label>
+              <label>有效天数<input name="expiresInDays" type="number" min="1" value="30"></label>
+              <div class="actions">
+                <button class="primary" type="submit">生成兑换码</button>
+                <button id="copyCreatedKeys" type="button" hidden>复制本次生成</button>
+              </div>
+              <div id="licenseMessage" class="message"></div>
+              <div id="createdKeys" class="created-list" hidden></div>
+            </form>
+          </div>
+        </section>
+      </div>
+
+      <div class="stack">
+        <section>
+          <div class="section-head">
+            <h2>后台数据</h2>
+            <div class="tabs">
+              <button class="tab active" type="button" data-tab="licenses">兑换码</button>
+              <button class="tab" type="button" data-tab="profiles">服务商</button>
+            </div>
+          </div>
+          <div id="licensesPanel" class="tabpanel active">
+            <div class="section-head">
+              <h2>兑换码列表</h2>
+              <div class="section-actions">
+                <button id="deleteSelectedLicenses" class="danger" type="button" disabled>删除选中</button>
+                <button id="refreshLicenses" type="button">刷新</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="select-cell"><input id="selectAllLicenses" type="checkbox" aria-label="全选兑换码"></th><th>兑换码</th><th>类型</th><th>剩余/总数</th><th>并发</th><th>有效</th><th>备注 / 发放对象</th><th>操作</th></tr></thead>
+                <tbody id="licensesTable"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="profilesPanel" class="tabpanel">
+            <div class="section-head">
+              <h2>服务商列表</h2>
+              <div class="section-actions">
+                <button id="newProfile" type="button">新增服务商</button>
+                <button id="refreshProfiles" type="button">刷新</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>名称</th><th>桶</th><th>模型</th><th>优先级</th><th>状态</th><th>密钥</th><th>操作</th></tr></thead>
+                <tbody id="profilesTable"></tbody>
+              </table>
+            </div>
+            <div id="providerFormWrap" class="provider-form-wrap" hidden>
+              <div class="section-head"><h2>服务商配置</h2></div>
+              <div class="body">
+                <form id="profileForm" class="form">
+                  <input name="id" type="hidden">
+                  <div class="columns">
+                    <label>名称<input name="label" placeholder="BLTCY 1K"></label>
+                    <label>桶<select name="tierBucket"><option value="1k">1K</option><option value="hd">HD</option></select></label>
+                  </div>
+                  <label>Base URL<input name="apiBaseUrl" placeholder="https://api.example.com"></label>
+                  <label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="更新时留空表示沿用原密钥"></label>
+                  <div class="columns">
+                    <label>优先级<input name="priority" type="number" min="1" value="100"></label>
+                    <label>状态<select name="status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
+                  </div>
+                  <label>API 模式<select name="apiMode"><option value="images">OpenAI Images</option><option value="ohmytoken">OhMyToken</option><option value="responses">Responses</option></select></label>
+                  <p class="hint">模型固定为 gpt-image-2。OpenAI Images/Responses 会发送质量参数；OhMyToken 模式只发送 size、aspect_ratio、response_format。</p>
+                  <div class="actions">
+                    <button class="primary" type="submit">保存服务商</button>
+                    <button id="resetProfileForm" type="button">清空</button>
+                    <button id="deleteProfileButton" class="danger form-delete" type="button" hidden>删除服务商</button>
+                  </div>
+                  <div id="profileMessage" class="message"></div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+`
+
+const els = {
+  loginPanel: mustGet<HTMLDivElement>('loginPanel'),
+  adminGrid: mustGet<HTMLDivElement>('adminGrid'),
+  loginForm: mustGet<HTMLFormElement>('loginForm'),
+  adminPassword: mustGet<HTMLInputElement>('adminPassword'),
+  loginMessage: mustGet<HTMLDivElement>('loginMessage'),
+  headerLogoutButton: mustGet<HTMLButtonElement>('headerLogoutButton'),
+  authStatus: mustGet<HTMLDivElement>('authStatus'),
+  licenseForm: mustGet<HTMLFormElement>('licenseForm'),
+  licenseMessage: mustGet<HTMLDivElement>('licenseMessage'),
+  copyCreatedKeys: mustGet<HTMLButtonElement>('copyCreatedKeys'),
+  createdKeys: mustGet<HTMLDivElement>('createdKeys'),
+  selectAllLicenses: mustGet<HTMLInputElement>('selectAllLicenses'),
+  deleteSelectedLicenses: mustGet<HTMLButtonElement>('deleteSelectedLicenses'),
+  profileForm: mustGet<HTMLFormElement>('profileForm'),
+  profileMessage: mustGet<HTMLDivElement>('profileMessage'),
+  resetProfileForm: mustGet<HTMLButtonElement>('resetProfileForm'),
+  newProfile: mustGet<HTMLButtonElement>('newProfile'),
+  deleteProfileButton: mustGet<HTMLButtonElement>('deleteProfileButton'),
+  providerFormWrap: mustGet<HTMLDivElement>('providerFormWrap'),
+  profilesTable: mustGet<HTMLTableSectionElement>('profilesTable'),
+  licensesTable: mustGet<HTMLTableSectionElement>('licensesTable'),
+  refreshLicenses: mustGet<HTMLButtonElement>('refreshLicenses'),
+  refreshProfiles: mustGet<HTMLButtonElement>('refreshProfiles'),
+}
+
+setAdminVisible(Boolean(state.token))
+updateAuthStatus(false)
+renderCreatedKeys()
+renderLicenses()
+renderProfiles()
+bindEvents()
+
+if (state.token) {
+  refreshAll().catch(() => {
+    logout()
+    message(els.loginMessage, '登录已失效，请重新输入管理员密码', 'bad')
+  })
+}
+
+function mustGet<T extends HTMLElement>(id: string): T {
+  const element = document.getElementById(id)
+  if (!element) {
+    throw new Error(`Missing element: ${id}`)
+  }
+  return element as T
+}
+
+function field<T extends HTMLInputElement | HTMLSelectElement>(form: HTMLFormElement, name: string): T {
+  const element = form.elements.namedItem(name)
+  if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement)) {
+    throw new Error(`Missing form field: ${name}`)
+  }
+  return element as T
+}
+
+function formValue(form: HTMLFormElement, name: string): string {
+  const value = new FormData(form).get(name)
+  return typeof value === 'string' ? value : ''
+}
+
+function h(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function message(el: HTMLElement, text: string, kind: MessageKind = ''): void {
+  el.textContent = text
+  el.className = `message${kind ? ` ${kind}` : ''}`
+}
+
+function setAdminVisible(visible: boolean): void {
+  els.loginPanel.hidden = visible
+  els.adminGrid.hidden = !visible
+  els.headerLogoutButton.hidden = !visible
+}
+
+function updateAuthStatus(ok: boolean): void {
+  const text = state.token ? (ok ? '已登录' : '正在验证') : '未登录'
+  els.authStatus.className = `status${ok ? ' ok' : state.token ? '' : ' bad'}`
+  const label = els.authStatus.querySelector('span:last-child')
+  if (label) label.textContent = text
+}
+
+function authHeaders(): Record<string, string> {
+  if (!state.token) {
+    throw new Error('请先登录管理员账号')
+  }
+  return { Authorization: `Bearer ${state.token}` }
+}
+
+async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers = new Headers(options.headers)
+  for (const [key, value] of Object.entries(authHeaders())) {
+    headers.set(key, value)
+  }
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  const response = await fetch(path, { ...options, headers })
+  const contentType = response.headers.get('Content-Type') || ''
+  const body = contentType.includes('application/json') ? await response.json() : await response.text()
+  if (!response.ok) {
+    const errorBody = body as { error?: { message?: string } }
+    const text = errorBody?.error?.message || String(body || response.statusText)
+    throw new Error(text)
+  }
+  return body as T
+}
+
+async function copyText(text: string): Promise<void> {
+  await navigator.clipboard.writeText(text)
+}
+
+function statusPill(value: string): string {
+  const kind = value === 'active' || value === 'done' ? 'ok' : value === 'queued' || value === 'running' ? 'warn' : 'bad'
+  return `<span class="pill ${kind}">${h(value || '-')}</span>`
+}
+
+function isExpired(value?: string | null): boolean {
+  if (!value) return false
+  const ts = Date.parse(value)
+  return Number.isFinite(ts) && ts <= Date.now()
+}
+
+function expiryStatus(value?: string | null): string {
+  const expired = isExpired(value)
+  const label = expired ? '已过期' : '有效'
+  return `<span class="icon-status ${expired ? 'bad' : 'ok'}" title="${h(label)}" aria-label="${h(label)}">${expired ? '×' : '✓'}</span>`
+}
+
+function renderCreatedKeys(): void {
+  els.copyCreatedKeys.hidden = state.createdKeys.length === 0
+  els.createdKeys.hidden = state.createdKeys.length === 0
+  els.createdKeys.innerHTML = state.createdKeys
+    .map(
+      (item) =>
+        `<div class="created-item"><div class="created-item-row"><code>${h(item.key)}</code><button class="small" type="button" data-copy-created="${h(item.key)}">复制</button></div><div class="hint">${h(item.tier)} · ${h(item.totalCredits)} 次${item.note ? ` · ${h(item.note)}` : ''}</div></div>`,
+    )
+    .join('')
+}
+
+function renderLicenses(): void {
+  els.licensesTable.innerHTML =
+    state.licenses
+      .map((license) => {
+        const key = license.key || ''
+        const checked = state.selectedLicenseIds.includes(license.id) ? ' checked' : ''
+        const note = license.note || ''
+        const editingNote = state.editingLicenseNoteId === license.id
+        const noteHtml = editingNote
+          ? `<div class="note-edit"><input data-license-note-input="${h(license.id)}" value="${h(note)}" placeholder="备注 / 发放对象"><div class="note-edit-actions"><button class="small primary" type="button" data-save-license-note="${h(license.id)}">确定</button><button class="small" type="button" data-cancel-license-note="${h(license.id)}">取消</button></div></div>`
+          : `<div class="note-view"><span class="note-text${note ? '' : ' note-empty'}">${h(note || '未填写')}</span><button class="small" type="button" data-edit-license-note="${h(license.id)}">编辑</button></div>`
+        return `<tr><td class="select-cell"><input type="checkbox" data-license-select="${h(license.id)}"${checked} aria-label="选择兑换码"></td><td><div class="code-cell">${
+          key
+            ? `<code>${h(key)}</code><button class="small" type="button" data-copy-license="${h(key)}">复制</button>`
+            : '<span class="pill warn">旧数据不可查看</span>'
+        }</div></td><td>${h(license.tier)}</td><td>${h(license.remaining_credits)} / ${h(license.total_credits)}</td><td>${h(license.max_concurrent)}</td><td>${expiryStatus(license.expires_at)}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
+      })
+      .join('') || '<tr><td colspan="8">暂无兑换码</td></tr>'
+
+  const selectedCount = state.selectedLicenseIds.length
+  els.deleteSelectedLicenses.disabled = selectedCount === 0
+  els.deleteSelectedLicenses.textContent = selectedCount ? `删除选中 ${selectedCount}` : '删除选中'
+  els.selectAllLicenses.checked = state.licenses.length > 0 && selectedCount === state.licenses.length
+  els.selectAllLicenses.indeterminate = selectedCount > 0 && selectedCount < state.licenses.length
+}
+
+function renderProfiles(): void {
+  els.profilesTable.innerHTML =
+    state.profiles
+      .map(
+        (profile) =>
+          `<tr><td>${h(profile.label)}</td><td><span class="pill">${h(profile.tierBucket)}</span></td><td>${h(profile.model)}</td><td>${h(profile.priority)}</td><td>${statusPill(profile.status)}</td><td>${profile.hasApiKey ? '<span class="pill ok">已保存</span>' : '<span class="pill bad">缺失</span>'}</td><td><div class="actions"><button class="small" type="button" data-edit-profile="${h(profile.id)}">修改</button><button class="small danger" type="button" data-delete-profile="${h(profile.id)}">删除</button></div></td></tr>`,
+      )
+      .join('') || '<tr><td colspan="7">暂无服务商</td></tr>'
+}
+
+async function loadLicenses(): Promise<void> {
+  const data = await api<LicenseListResponse>('/admin/licenses?limit=100')
+  state.licenses = data.licenses || []
+  const licenseIds = state.licenses.map((item) => item.id)
+  state.selectedLicenseIds = state.selectedLicenseIds.filter((id) => licenseIds.includes(id))
+  if (state.editingLicenseNoteId && !licenseIds.includes(state.editingLicenseNoteId)) state.editingLicenseNoteId = ''
+  if (state.lastSelectedLicenseId && !licenseIds.includes(state.lastSelectedLicenseId)) state.lastSelectedLicenseId = ''
+  renderLicenses()
+}
+
+async function loadProfiles(): Promise<void> {
+  const data = await api<ServiceProfileListResponse>('/admin/service-profiles')
+  state.profiles = data.serviceProfiles || []
+  renderProfiles()
+}
+
+async function refreshAll(): Promise<void> {
+  await Promise.all([loadLicenses(), loadProfiles()])
+  setAdminVisible(true)
+  updateAuthStatus(true)
+}
+
+function setProfileFormVisible(visible: boolean): void {
+  els.providerFormWrap.hidden = !visible
+}
+
+function resetProfileForm(messageText = '', visible = false): void {
+  state.editingProfileId = ''
+  els.profileForm.reset()
+  field<HTMLInputElement>(els.profileForm, 'id').value = ''
+  field<HTMLSelectElement>(els.profileForm, 'tierBucket').value = '1k'
+  field<HTMLInputElement>(els.profileForm, 'priority').value = '100'
+  field<HTMLSelectElement>(els.profileForm, 'apiMode').value = 'images'
+  field<HTMLSelectElement>(els.profileForm, 'status').value = 'active'
+  els.deleteProfileButton.hidden = true
+  setProfileFormVisible(visible)
+  message(els.profileMessage, messageText)
+}
+
+function loadProfileForm(profile: ServiceProfile): void {
+  setProfileFormVisible(true)
+  state.editingProfileId = profile.id || ''
+  field<HTMLInputElement>(els.profileForm, 'id').value = profile.id || ''
+  field<HTMLInputElement>(els.profileForm, 'label').value = profile.label || ''
+  field<HTMLSelectElement>(els.profileForm, 'tierBucket').value = profile.tierBucket || '1k'
+  field<HTMLInputElement>(els.profileForm, 'apiBaseUrl').value = profile.apiBaseUrl || ''
+  field<HTMLInputElement>(els.profileForm, 'apiKey').value = ''
+  field<HTMLSelectElement>(els.profileForm, 'apiMode').value = profile.apiMode || 'images'
+  field<HTMLInputElement>(els.profileForm, 'priority').value = String(profile.priority || 100)
+  field<HTMLSelectElement>(els.profileForm, 'status').value = profile.status || 'active'
+  els.deleteProfileButton.hidden = !state.editingProfileId
+  message(els.profileMessage, '已载入服务商，保存时 API Key 留空会沿用原密钥。')
+}
+
+async function deleteLicenseIds(ids: string[]): Promise<void> {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
+  if (!uniqueIds.length) return
+  if (!confirm(`确定删除选中的 ${uniqueIds.length} 个兑换码？删除后列表中不再显示。`)) return
+  await api('/admin/licenses/delete', { method: 'POST', body: JSON.stringify({ ids: uniqueIds }) })
+  state.selectedLicenseIds = state.selectedLicenseIds.filter((id) => !uniqueIds.includes(id))
+  message(els.licenseMessage, `已删除 ${uniqueIds.length} 个兑换码`, 'ok')
+  await loadLicenses()
+}
+
+function logout(): void {
+  state.token = ''
+  state.createdKeys = []
+  localStorage.removeItem('lillian-admin-token')
+  els.adminPassword.value = ''
+  setAdminVisible(false)
+  updateAuthStatus(false)
+  renderCreatedKeys()
+  message(els.loginMessage, '')
+}
+
+function bindEvents(): void {
+  els.loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const password = els.adminPassword.value.trim()
+    if (!password) {
+      message(els.loginMessage, '请输入管理员密码', 'bad')
+      return
+    }
+    state.token = password
+    setAdminVisible(true)
+    updateAuthStatus(false)
+    try {
+      await refreshAll()
+      localStorage.setItem('lillian-admin-token', state.token)
+      els.adminPassword.value = ''
+      message(els.loginMessage, '')
+    } catch (error) {
+      state.token = ''
+      localStorage.removeItem('lillian-admin-token')
+      setAdminVisible(false)
+      updateAuthStatus(false)
+      message(els.loginMessage, (error as Error).message, 'bad')
+    }
+  })
+
+  els.headerLogoutButton.addEventListener('click', logout)
+
+  els.refreshLicenses.addEventListener('click', () => {
+    loadLicenses()
+      .then(() => message(els.licenseMessage, '兑换码已刷新', 'ok'))
+      .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.selectAllLicenses.addEventListener('change', () => {
+    state.selectedLicenseIds = els.selectAllLicenses.checked ? state.licenses.map((license) => license.id) : []
+    state.lastSelectedLicenseId = ''
+    renderLicenses()
+  })
+
+  els.deleteSelectedLicenses.addEventListener('click', () => {
+    deleteLicenseIds(state.selectedLicenseIds).catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.refreshProfiles.addEventListener('click', () => {
+    loadProfiles()
+      .then(() => message(els.profileMessage, '服务商已刷新', 'ok'))
+      .catch((error: Error) => message(els.profileMessage, error.message, 'bad'))
+  })
+
+  document.querySelectorAll<HTMLButtonElement>('.tab').forEach((button) => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'))
+      document.querySelectorAll('.tabpanel').forEach((panel) => panel.classList.remove('active'))
+      button.classList.add('active')
+      document.getElementById(`${button.dataset.tab}Panel`)?.classList.add('active')
+    })
+  })
+
+  els.licenseForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    message(els.licenseMessage, '正在生成...')
+    try {
+      const payload = {
+        tier: formValue(els.licenseForm, 'tier'),
+        count: Number(formValue(els.licenseForm, 'count') || 1),
+        totalCredits: Number(formValue(els.licenseForm, 'totalCredits') || 5),
+        maxConcurrent: Number(formValue(els.licenseForm, 'maxConcurrent') || 6),
+        expiresInDays: Number(formValue(els.licenseForm, 'expiresInDays') || 30),
+        note: formValue(els.licenseForm, 'note').trim(),
+      }
+      const data = await api<CreateLicenseResponse>('/admin/licenses', { method: 'POST', body: JSON.stringify(payload) })
+      state.createdKeys = data.keys || []
+      renderCreatedKeys()
+      message(els.licenseMessage, `已生成 ${state.createdKeys.length} 个兑换码。`, 'ok')
+      await loadLicenses()
+    } catch (error) {
+      message(els.licenseMessage, (error as Error).message, 'bad')
+    }
+  })
+
+  els.copyCreatedKeys.addEventListener('click', () => {
+    const text = state.createdKeys.map((item) => item.key).join('\n')
+    copyText(text)
+      .then(() => message(els.licenseMessage, '已复制本次生成的兑换码', 'ok'))
+      .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.profileForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    message(els.profileMessage, '正在保存...')
+    try {
+      const payload = {
+        id: formValue(els.profileForm, 'id').trim(),
+        label: formValue(els.profileForm, 'label').trim(),
+        tierBucket: formValue(els.profileForm, 'tierBucket'),
+        apiBaseUrl: formValue(els.profileForm, 'apiBaseUrl').trim(),
+        apiKey: formValue(els.profileForm, 'apiKey').trim(),
+        apiMode: formValue(els.profileForm, 'apiMode'),
+        priority: Number(formValue(els.profileForm, 'priority') || 100),
+        status: formValue(els.profileForm, 'status'),
+      }
+      const profile = await api<ServiceProfile>('/admin/service-profiles', { method: 'POST', body: JSON.stringify(payload) })
+      field<HTMLInputElement>(els.profileForm, 'apiKey').value = ''
+      state.editingProfileId = profile.id || payload.id || ''
+      field<HTMLInputElement>(els.profileForm, 'id').value = state.editingProfileId
+      els.deleteProfileButton.hidden = !state.editingProfileId
+      message(els.profileMessage, '服务商已保存', 'ok')
+      await loadProfiles()
+    } catch (error) {
+      message(els.profileMessage, (error as Error).message, 'bad')
+    }
+  })
+
+  els.resetProfileForm.addEventListener('click', () => resetProfileForm('', false))
+  els.newProfile.addEventListener('click', () => resetProfileForm('正在新增服务商，保存后会自动生成内部 ID。', true))
+
+  els.deleteProfileButton.addEventListener('click', async () => {
+    const id = state.editingProfileId || formValue(els.profileForm, 'id').trim()
+    if (!id) return
+    if (!confirm('确定删除这个服务商？删除后不会再参与路由。')) return
+    els.deleteProfileButton.disabled = true
+    try {
+      await api(`/admin/service-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      message(els.profileMessage, '服务商已删除', 'ok')
+      resetProfileForm('服务商已删除')
+      await loadProfiles()
+    } catch (error) {
+      message(els.profileMessage, (error as Error).message, 'bad')
+    } finally {
+      els.deleteProfileButton.disabled = false
+    }
+  })
+
+  document.addEventListener('click', (event) => {
+    void handleDocumentClick(event)
+  })
+}
+
+async function handleDocumentClick(event: MouseEvent): Promise<void> {
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return
+
+  if (target.dataset.copyCreated) {
+    await copyText(target.dataset.copyCreated)
+      .then(() => message(els.licenseMessage, '已复制兑换码', 'ok'))
+      .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  }
+
+  if (target.dataset.copyLicense) {
+    await copyText(target.dataset.copyLicense)
+      .then(() => message(els.licenseMessage, '已复制兑换码', 'ok'))
+      .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  }
+
+  if (target instanceof HTMLInputElement && target.dataset.licenseSelect) {
+    selectLicense(target.dataset.licenseSelect, target.checked, event.shiftKey)
+  }
+
+  if (target.dataset.editLicenseNote) {
+    state.editingLicenseNoteId = target.dataset.editLicenseNote
+    renderLicenses()
+    window.setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>(`[data-license-note-input="${CSS.escape(state.editingLicenseNoteId)}"]`)
+      input?.focus()
+      input?.select()
+    }, 0)
+  }
+
+  if (target.dataset.cancelLicenseNote) {
+    state.editingLicenseNoteId = ''
+    renderLicenses()
+  }
+
+  if (target.dataset.saveLicenseNote && target instanceof HTMLButtonElement) {
+    const id = target.dataset.saveLicenseNote
+    const noteInput = document.querySelector<HTMLInputElement>(`[data-license-note-input="${CSS.escape(id)}"]`)
+    target.disabled = true
+    try {
+      await api(`/admin/licenses/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ note: noteInput?.value || '' }) })
+      state.editingLicenseNoteId = ''
+      message(els.licenseMessage, '备注已保存', 'ok')
+      await loadLicenses()
+    } catch (error) {
+      message(els.licenseMessage, (error as Error).message, 'bad')
+    } finally {
+      target.disabled = false
+    }
+  }
+
+  if (target.dataset.deleteLicense) {
+    await deleteLicenseIds([target.dataset.deleteLicense]).catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  }
+
+  if (target.dataset.editProfile) {
+    const profile = state.profiles.find((item) => item.id === target.dataset.editProfile)
+    if (profile) loadProfileForm(profile)
+  }
+
+  if (target.dataset.deleteProfile && target instanceof HTMLButtonElement) {
+    const profile = state.profiles.find((item) => item.id === target.dataset.deleteProfile)
+    const name = profile ? profile.label : target.dataset.deleteProfile
+    if (!confirm(`确定删除服务商「${name}」？删除后不会再参与路由。`)) return
+    target.disabled = true
+    try {
+      await api(`/admin/service-profiles/${encodeURIComponent(target.dataset.deleteProfile)}`, { method: 'DELETE' })
+      if (state.editingProfileId === target.dataset.deleteProfile) resetProfileForm('服务商已删除')
+      await loadProfiles()
+    } catch (error) {
+      message(els.profileMessage, (error as Error).message, 'bad')
+    } finally {
+      target.disabled = false
+    }
+  }
+}
+
+function selectLicense(selectedId: string, shouldSelect: boolean, shiftKey: boolean): void {
+  const orderedLicenseIds = state.licenses.map((license) => license.id)
+  const selectedSet = new Set(state.selectedLicenseIds)
+  const anchorIndex = orderedLicenseIds.indexOf(state.lastSelectedLicenseId)
+  const currentIndex = orderedLicenseIds.indexOf(selectedId)
+  let rangeIds = [selectedId]
+
+  if (shiftKey && anchorIndex >= 0 && currentIndex >= 0) {
+    const start = Math.min(anchorIndex, currentIndex)
+    const end = Math.max(anchorIndex, currentIndex)
+    rangeIds = orderedLicenseIds.slice(start, end + 1)
+  }
+
+  if (shouldSelect) rangeIds.forEach((id) => selectedSet.add(id))
+  else rangeIds.forEach((id) => selectedSet.delete(id))
+
+  state.selectedLicenseIds = orderedLicenseIds.filter((id) => selectedSet.has(id))
+  state.lastSelectedLicenseId = selectedId
+  renderLicenses()
+}

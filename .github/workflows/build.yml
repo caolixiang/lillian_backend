@@ -25,6 +25,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/admin/package-lock.json
+
+      - name: Build admin frontend
+        run: |
+          npm --prefix web/admin ci
+          npm --prefix web/admin run build
+
       - name: Test
         run: go test ./...
 

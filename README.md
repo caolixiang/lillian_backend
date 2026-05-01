@@ -9,6 +9,7 @@ The Cloudflare side should only serve the SPA and `/config.json`. This backend o
 This first backend scaffold includes:
 
 - Go HTTP server with `/health`, `/ready`, and `/config.json`
+- Vite-built admin frontend embedded into the Go binary at `/admin`
 - Postgres connection plumbing
 - S3-compatible object storage client for R2, AWS S3, MinIO, Wasabi, Backblaze, and similar providers
 - Initial Postgres schema for licenses, activations, tasks, credit ledger, and service profiles
@@ -53,10 +54,19 @@ Implemented admin/runtime endpoints:
 
 ```bash
 cp .env.example .env
+npm --prefix web/admin install
+npm --prefix web/admin run build
 docker compose up --build
 ```
 
 Compose publishes Postgres on host port `15432` by default to avoid colliding with a local Postgres on `5432`. Override `POSTGRES_PORT` if needed.
+
+For backend-only local runs outside Docker, build the admin frontend once before `go run`:
+
+```bash
+npm --prefix web/admin run build
+go run ./cmd/backend
+```
 
 Health:
 

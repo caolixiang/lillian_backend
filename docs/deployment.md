@@ -53,7 +53,7 @@ Defaults you normally do not need to set on Railway:
 
 ## Railway
 
-Railway can build this repository from the `Dockerfile`.
+Railway can build this repository from the `Dockerfile`. The Docker build compiles the Vite admin frontend first, embeds the generated files into the Go binary, and then builds the backend service.
 
 1. Create a Railway project from this repo.
 2. Add a Railway Postgres service.

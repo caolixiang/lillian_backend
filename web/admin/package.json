@@ -1,0 +1,15 @@
+{
+  "name": "lillian-admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "rm -rf ../../internal/httpapi/admin_dist/assets ../../internal/httpapi/admin_dist/index.html && tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vite": "^6.3.2"
+  }
+}

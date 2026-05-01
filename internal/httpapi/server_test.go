@@ -69,8 +69,12 @@ func TestAdminPage(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Fatalf("content-type = %q", got)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "莉莉安的后台") || !strings.Contains(body, "生成兑换码") {
+	body := rec.Body.String()
+	if !strings.Contains(body, "莉莉安的后台") {
 		t.Fatalf("admin page missing expected content")
+	}
+	if !strings.Contains(body, "/admin/assets/") && !strings.Contains(body, "Admin frontend is not built") {
+		t.Fatalf("admin page is neither built index nor fallback")
 	}
 }
 
