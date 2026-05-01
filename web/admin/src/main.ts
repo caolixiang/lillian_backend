@@ -9,6 +9,7 @@ interface LicenseRecord {
   total_credits: number
   remaining_credits: number
   max_concurrent: number
+  status?: string
   expires_at?: string | null
   note?: string
 }
@@ -174,7 +175,7 @@ app.innerHTML = `
             </form>
             <div class="table-wrap">
               <table>
-                <thead><tr><th class="select-cell"><input id="selectAllLicenses" type="checkbox" aria-label="全选兑换码"></th><th>兑换码</th><th>类型</th><th>剩余/总数</th><th>并发</th><th>有效</th><th>备注 / 发放对象</th><th>操作</th></tr></thead>
+                <thead><tr><th class="select-cell"><input id="selectAllLicenses" type="checkbox" aria-label="全选兑换码"></th><th>兑换码</th><th>类型</th><th>剩余/总数</th><th>并发</th><th>可用</th><th>备注 / 发放对象</th><th>操作</th></tr></thead>
                 <tbody id="licensesTable"></tbody>
               </table>
             </div>
@@ -367,10 +368,13 @@ function isExpired(value?: string | null): boolean {
   return Number.isFinite(ts) && ts <= Date.now()
 }
 
-function expiryStatus(value?: string | null): string {
-  const expired = isExpired(value)
-  const label = expired ? '已过期' : '有效'
-  return `<span class="icon-status ${expired ? 'bad' : 'ok'}" title="${h(label)}" aria-label="${h(label)}">${expired ? '×' : '✓'}</span>`
+function availabilityStatus(license: LicenseRecord): string {
+  let label = '可用'
+  if (license.status && license.status !== 'active') label = '不可用'
+  else if (isExpired(license.expires_at)) label = '已过期'
+  else if (license.remaining_credits <= 0) label = '已用完'
+  const available = label === '可用'
+  return `<span class="icon-status ${available ? 'ok' : 'bad'}" title="${h(label)}" aria-label="${h(label)}">${available ? '✓' : '×'}</span>`
 }
 
 function renderCreatedKeys(): void {
@@ -399,7 +403,7 @@ function renderLicenses(): void {
           key
             ? `<code>${h(key)}</code><button class="small" type="button" data-copy-license="${h(key)}">复制</button>`
             : '<span class="pill warn">旧数据不可查看</span>'
-        }</div></td><td>${h(license.tier)}</td><td>${h(license.remaining_credits)} / ${h(license.total_credits)}</td><td>${h(license.max_concurrent)}</td><td>${expiryStatus(license.expires_at)}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
+        }</div></td><td>${h(license.tier)}</td><td>${h(license.remaining_credits)} / ${h(license.total_credits)}</td><td>${h(license.max_concurrent)}</td><td>${availabilityStatus(license)}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
       })
       .join('') || '<tr><td colspan="8">暂无兑换码</td></tr>'
 
