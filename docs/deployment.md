@@ -27,29 +27,34 @@ It does not start or bundle Postgres, MinIO, R2, or any queue service. Postgres 
 
 Railway should be the default target. Add Railway Postgres or use any managed Postgres connection string, then set the backend service variables below.
 
-Railway usually injects `PORT` automatically. Do not hard-code `PORT` unless the platform asks you to.
+Railway usually injects `PORT` automatically. If Railway provides it, keep Railway's value; the `PORT=8787` line is mainly for VPS/Docker runs and keeps the env templates aligned.
 
 Required:
 
 ```env
 APP_ENV=production
-PUBLIC_API_BASE_URL=https://api.example.com
+PORT=8787
 CORS_ORIGIN=https://app.example.com
+PUBLIC_API_BASE_URL=https://api.example.com
 
 DATABASE_URL=${{Postgres.DATABASE_URL}}
+AUTO_MIGRATE=true
+MIGRATIONS_DIR=migrations
 
 ADMIN_TOKEN=replace-with-long-random-admin-password
 LICENSE_KEY_PEPPER=replace-with-long-random-stable-secret
 PROVIDER_CREDENTIAL_SECRET=replace-with-long-random-stable-secret
 
 S3_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com
+S3_REGION=auto
 S3_BUCKET=lillian-canvas-images
 S3_ACCESS_KEY_ID=replace-with-access-key-id
 S3_SECRET_ACCESS_KEY=replace-with-secret-access-key
 S3_PUBLIC_BASE_URL=https://images.example.com
+S3_FORCE_PATH_STYLE=true
 ```
 
-Defaults you normally do not need to set on Railway:
+These values have safe defaults in code but stay in the env templates so all three env files use the same shape:
 
 - `AUTO_MIGRATE=true`
 - `MIGRATIONS_DIR=migrations`
