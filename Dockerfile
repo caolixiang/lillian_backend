@@ -6,6 +6,7 @@ COPY web/admin/package*.json ./
 RUN npm ci
 
 COPY web/admin ./
+COPY internal/httpapi/assets /src/internal/httpapi/assets
 RUN npm run build
 
 FROM golang:1.25-alpine AS build

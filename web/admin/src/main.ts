@@ -113,7 +113,7 @@ app.innerHTML = `
   <div class="shell">
     <header class="topbar">
       <div class="brand">
-        <img class="mark" src="/lillian-icon.svg" alt="">
+        <img class="mark" src="/lillian-icon.svg?v=cloudflare-backend-icon" alt="">
         <div>
           <h1>莉莉安的后台</h1>
           <div class="subtitle">Lillian's Canvas Admin</div>

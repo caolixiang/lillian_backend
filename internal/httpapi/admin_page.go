@@ -10,6 +10,9 @@ import (
 //go:embed admin_dist
 var adminDistFS embed.FS
 
+//go:embed assets/lillian-icon.svg
+var fallbackIconSVG []byte
+
 func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -54,7 +57,7 @@ func (s *Server) handleIcon(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(icon)
 		return
 	}
-	_, _ = w.Write([]byte(lillianIconSVG))
+	_, _ = w.Write(fallbackIconSVG)
 }
 
 const adminFallbackHTML = `<!doctype html>
@@ -63,7 +66,7 @@ const adminFallbackHTML = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>莉莉安的后台 | Lillian's Canvas Admin</title>
-  <link rel="icon" href="/lillian-icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/lillian-icon.svg?v=cloudflare-backend-icon" type="image/svg+xml">
 </head>
 <body>
   <main style="font-family: system-ui, sans-serif; max-width: 720px; margin: 80px auto; line-height: 1.6;">
@@ -72,5 +75,3 @@ const adminFallbackHTML = `<!doctype html>
   </main>
 </body>
 </html>`
-
-const lillianIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#f8f5ff"/><path d="M18 44c8-2 13-8 14-20 1 12 6 18 14 20-7 5-21 5-28 0Z" fill="#8f7af4"/><path d="M32 12c4 6 5 13 0 21-5-8-4-15 0-21Z" fill="#5849bf"/><path d="M21 24c7 0 11 4 11 11-8-1-12-5-11-11Z" fill="#d9b7f5"/><path d="M43 24c-7 0-11 4-11 11 8-1 12-5 11-11Z" fill="#b7d7f5"/><circle cx="32" cy="38" r="4" fill="#26233f"/></svg>`

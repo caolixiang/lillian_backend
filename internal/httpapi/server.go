@@ -44,6 +44,8 @@ func (s *Server) Handler() http.Handler {
 	r.Head("/admin/index.html", s.handleAdminPage)
 	r.Get("/admin/assets/*", s.handleAdminAsset)
 	r.Head("/admin/assets/*", s.handleAdminAsset)
+	r.Get("/admin/lillian-icon.svg", s.handleIcon)
+	r.Head("/admin/lillian-icon.svg", s.handleIcon)
 	r.Get("/lillian-icon.svg", s.handleIcon)
 	r.Head("/lillian-icon.svg", s.handleIcon)
 	r.Post("/api/keys/activate", s.handleActivateLicense)

@@ -81,17 +81,23 @@ func TestAdminPage(t *testing.T) {
 func TestIcon(t *testing.T) {
 	server := New(config.Config{CORSOrigin: "*"}, nil, nil, nil)
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/lillian-icon.svg", nil)
-	server.Handler().ServeHTTP(rec, req)
+	for _, path := range []string{"/lillian-icon.svg", "/admin/lillian-icon.svg"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		server.Handler().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	if got := rec.Header().Get("Content-Type"); got != "image/svg+xml; charset=utf-8" {
-		t.Fatalf("content-type = %q", got)
-	}
-	if body := rec.Body.String(); !strings.Contains(body, "<svg") {
-		t.Fatalf("icon response is not svg")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", path, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Type"); got != "image/svg+xml; charset=utf-8" {
+			t.Fatalf("%s content-type = %q", path, got)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "<svg") {
+			t.Fatalf("%s icon response is not svg", path)
+		}
+		if !strings.Contains(body, `viewBox="0 0 1024 1024"`) {
+			t.Fatalf("%s icon response is not the shared Lillian icon", path)
+		}
 	}
 }
