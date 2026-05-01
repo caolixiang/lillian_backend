@@ -34,6 +34,17 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/health", s.handleHealth)
 	r.Get("/ready", s.handleReady)
 	r.Get("/config.json", s.handleConfig)
+	r.Post("/api/keys/activate", s.handleActivateLicense)
+	r.Get("/api/me/credits", s.handleCredits)
+	r.Post("/admin/licenses", s.handleAdminCreateLicenses)
+	r.Get("/admin/licenses", s.handleAdminListLicenses)
+	r.Post("/admin/licenses/delete", s.handleAdminDeleteLicenses)
+	r.Post("/admin/licenses/{id}", s.handleAdminUpdateLicense)
+	r.Patch("/admin/licenses/{id}", s.handleAdminUpdateLicense)
+	r.Delete("/admin/licenses/{id}", s.handleAdminDeleteLicenses)
+	r.Get("/admin/service-profiles", s.handleAdminListServiceProfiles)
+	r.Post("/admin/service-profiles", s.handleAdminUpsertServiceProfile)
+	r.Delete("/admin/service-profiles/{id}", s.handleAdminDeleteServiceProfile)
 	return r
 }
 
