@@ -39,6 +39,12 @@ interface CreateLicenseResponse {
 
 interface LicenseListResponse {
   licenses: LicenseRecord[]
+  page?: {
+    limit?: number
+    offset?: number
+    hasMore?: boolean
+    search?: string
+  }
 }
 
 interface ServiceProfileListResponse {
@@ -54,6 +60,10 @@ interface AdminState {
   editingLicenseNoteId: string
   lastSelectedLicenseId: string
   selectedLicenseIds: string[]
+  licensePageSize: number
+  licenseOffset: number
+  licenseHasMore: boolean
+  licenseSearch: string
 }
 
 const state: AdminState = {
@@ -65,12 +75,20 @@ const state: AdminState = {
   editingLicenseNoteId: '',
   lastSelectedLicenseId: '',
   selectedLicenseIds: [],
+  licensePageSize: initialLicensePageSize(),
+  licenseOffset: 0,
+  licenseHasMore: false,
+  licenseSearch: '',
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
 if (!app) {
   throw new Error('Admin root element is missing')
+}
+
+function initialLicensePageSize(): number {
+  return localStorage.getItem('lillian-admin-license-page-size') === '50' ? 50 : 20
 }
 
 app.innerHTML = `
@@ -146,11 +164,24 @@ app.innerHTML = `
                 <button id="refreshLicenses" type="button">刷新</button>
               </div>
             </div>
+            <form id="licenseSearchForm" class="list-toolbar">
+              <label class="search-field">搜索兑换码<input id="licenseSearch" name="q" type="search" autocomplete="off" placeholder="输入完整兑换码"></label>
+              <div class="toolbar-actions">
+                <button type="submit">搜索</button>
+                <button id="clearLicenseSearch" type="button">清空</button>
+                <label class="page-size">每页<select id="licensePageSize"><option value="20">20</option><option value="50">50</option></select></label>
+              </div>
+            </form>
             <div class="table-wrap">
               <table>
                 <thead><tr><th class="select-cell"><input id="selectAllLicenses" type="checkbox" aria-label="全选兑换码"></th><th>兑换码</th><th>类型</th><th>剩余/总数</th><th>并发</th><th>有效</th><th>备注 / 发放对象</th><th>操作</th></tr></thead>
                 <tbody id="licensesTable"></tbody>
               </table>
+            </div>
+            <div class="pager">
+              <span id="licensePageInfo" class="page-info"></span>
+              <button id="prevLicensePage" type="button">上一页</button>
+              <button id="nextLicensePage" type="button">下一页</button>
             </div>
           </div>
           <div id="profilesPanel" class="tabpanel">
@@ -214,6 +245,13 @@ const els = {
   createdKeys: mustGet<HTMLDivElement>('createdKeys'),
   selectAllLicenses: mustGet<HTMLInputElement>('selectAllLicenses'),
   deleteSelectedLicenses: mustGet<HTMLButtonElement>('deleteSelectedLicenses'),
+  licenseSearchForm: mustGet<HTMLFormElement>('licenseSearchForm'),
+  licenseSearch: mustGet<HTMLInputElement>('licenseSearch'),
+  clearLicenseSearch: mustGet<HTMLButtonElement>('clearLicenseSearch'),
+  licensePageSize: mustGet<HTMLSelectElement>('licensePageSize'),
+  licensePageInfo: mustGet<HTMLSpanElement>('licensePageInfo'),
+  prevLicensePage: mustGet<HTMLButtonElement>('prevLicensePage'),
+  nextLicensePage: mustGet<HTMLButtonElement>('nextLicensePage'),
   profileForm: mustGet<HTMLFormElement>('profileForm'),
   profileMessage: mustGet<HTMLDivElement>('profileMessage'),
   resetProfileForm: mustGet<HTMLButtonElement>('resetProfileForm'),
@@ -370,6 +408,21 @@ function renderLicenses(): void {
   els.deleteSelectedLicenses.textContent = selectedCount ? `删除选中 ${selectedCount}` : '删除选中'
   els.selectAllLicenses.checked = state.licenses.length > 0 && selectedCount === state.licenses.length
   els.selectAllLicenses.indeterminate = selectedCount > 0 && selectedCount < state.licenses.length
+  renderLicensePager()
+}
+
+function renderLicensePager(): void {
+  const page = Math.floor(state.licenseOffset / state.licensePageSize) + 1
+  const start = state.licenses.length ? state.licenseOffset + 1 : 0
+  const end = state.licenseOffset + state.licenses.length
+  const searchSuffix = state.licenseSearch ? ' · 搜索结果' : ''
+  els.licensePageSize.value = String(state.licensePageSize)
+  if (document.activeElement !== els.licenseSearch) {
+    els.licenseSearch.value = state.licenseSearch
+  }
+  els.prevLicensePage.disabled = state.licenseOffset <= 0
+  els.nextLicensePage.disabled = !state.licenseHasMore
+  els.licensePageInfo.textContent = state.licenses.length ? `第 ${page} 页 · ${start}-${end}${searchSuffix}` : `暂无结果${searchSuffix}`
 }
 
 function renderProfiles(): void {
@@ -383,8 +436,21 @@ function renderProfiles(): void {
 }
 
 async function loadLicenses(): Promise<void> {
-  const data = await api<LicenseListResponse>('/admin/licenses?limit=100')
+  const params = new URLSearchParams({
+    limit: String(state.licensePageSize),
+    offset: String(state.licenseOffset),
+  })
+  if (state.licenseSearch) {
+    params.set('q', state.licenseSearch)
+  }
+  const data = await api<LicenseListResponse>(`/admin/licenses?${params.toString()}`)
+  if ((data.licenses || []).length === 0 && state.licenseOffset > 0) {
+    state.licenseOffset = 0
+    await loadLicenses()
+    return
+  }
   state.licenses = data.licenses || []
+  state.licenseHasMore = Boolean(data.page?.hasMore)
   const licenseIds = state.licenses.map((item) => item.id)
   state.selectedLicenseIds = state.selectedLicenseIds.filter((id) => licenseIds.includes(id))
   if (state.editingLicenseNoteId && !licenseIds.includes(state.editingLicenseNoteId)) state.editingLicenseNoteId = ''
@@ -490,6 +556,54 @@ function bindEvents(): void {
       .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
   })
 
+  els.licenseSearchForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    state.licenseSearch = els.licenseSearch.value.trim()
+    state.licenseOffset = 0
+    state.selectedLicenseIds = []
+    state.lastSelectedLicenseId = ''
+    loadLicenses()
+      .then(() => message(els.licenseMessage, state.licenseSearch ? '搜索完成' : '兑换码已刷新', 'ok'))
+      .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.clearLicenseSearch.addEventListener('click', () => {
+    if (!state.licenseSearch && !els.licenseSearch.value.trim()) return
+    els.licenseSearch.value = ''
+    state.licenseSearch = ''
+    state.licenseOffset = 0
+    state.selectedLicenseIds = []
+    state.lastSelectedLicenseId = ''
+    loadLicenses()
+      .then(() => message(els.licenseMessage, '搜索已清空', 'ok'))
+      .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.licensePageSize.addEventListener('change', () => {
+    state.licensePageSize = els.licensePageSize.value === '50' ? 50 : 20
+    localStorage.setItem('lillian-admin-license-page-size', String(state.licensePageSize))
+    state.licenseOffset = 0
+    state.selectedLicenseIds = []
+    state.lastSelectedLicenseId = ''
+    loadLicenses().catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.prevLicensePage.addEventListener('click', () => {
+    if (state.licenseOffset <= 0) return
+    state.licenseOffset = Math.max(0, state.licenseOffset - state.licensePageSize)
+    state.selectedLicenseIds = []
+    state.lastSelectedLicenseId = ''
+    loadLicenses().catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.nextLicensePage.addEventListener('click', () => {
+    if (!state.licenseHasMore) return
+    state.licenseOffset += state.licensePageSize
+    state.selectedLicenseIds = []
+    state.lastSelectedLicenseId = ''
+    loadLicenses().catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
   els.selectAllLicenses.addEventListener('change', () => {
     state.selectedLicenseIds = els.selectAllLicenses.checked ? state.licenses.map((license) => license.id) : []
     state.lastSelectedLicenseId = ''
@@ -529,6 +643,10 @@ function bindEvents(): void {
       }
       const data = await api<CreateLicenseResponse>('/admin/licenses', { method: 'POST', body: JSON.stringify(payload) })
       state.createdKeys = data.keys || []
+      state.licenseSearch = ''
+      state.licenseOffset = 0
+      state.selectedLicenseIds = []
+      state.lastSelectedLicenseId = ''
       renderCreatedKeys()
       message(els.licenseMessage, `已生成 ${state.createdKeys.length} 个兑换码。`, 'ok')
       await loadLicenses()

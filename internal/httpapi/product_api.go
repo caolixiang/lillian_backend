@@ -249,18 +249,37 @@ func (s *Server) handleAdminListLicenses(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	limit := minPositive(intFromString(r.URL.Query().Get("limit")), 50, 200)
+	limit := minPositive(intFromString(r.URL.Query().Get("limit")), 20, 50)
+	offset := intFromString(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	queryLimit := limit + 1
 	ctx, cancel := contextWithTimeout(r, 5*time.Second)
 	defer cancel()
 
-	rows, err := s.db.Query(ctx, `
-		SELECT id, key_ciphertext, tier, total_credits, remaining_credits, max_concurrent,
-			status, expires_at, note, created_at, updated_at
-		FROM license_keys
-		WHERE status <> 'deleted'
-		ORDER BY created_at DESC
-		LIMIT $1
-	`, limit)
+	var rows pgx.Rows
+	var err error
+	if search != "" {
+		rows, err = s.db.Query(ctx, `
+			SELECT id, key_ciphertext, tier, total_credits, remaining_credits, max_concurrent,
+				status, expires_at, note, created_at, updated_at
+			FROM license_keys
+			WHERE status <> 'deleted' AND key_hash = $1
+			ORDER BY created_at DESC
+			LIMIT $2 OFFSET $3
+		`, s.hashSecret(search), queryLimit, offset)
+	} else {
+		rows, err = s.db.Query(ctx, `
+			SELECT id, key_ciphertext, tier, total_credits, remaining_credits, max_concurrent,
+				status, expires_at, note, created_at, updated_at
+			FROM license_keys
+			WHERE status <> 'deleted'
+			ORDER BY created_at DESC
+			LIMIT $1 OFFSET $2
+		`, queryLimit, offset)
+	}
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -268,20 +287,32 @@ func (s *Server) handleAdminListLicenses(w http.ResponseWriter, r *http.Request)
 	defer rows.Close()
 
 	licenses := []map[string]any{}
+	seen := 0
 	for rows.Next() {
 		license, err := scanLicense(rows)
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		licenses = append(licenses, s.publicLicense(license))
+		if seen < limit {
+			licenses = append(licenses, s.publicLicense(license))
+		}
+		seen++
 	}
 	if err := rows.Err(); err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"licenses": licenses})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"licenses": licenses,
+		"page": map[string]any{
+			"limit":   limit,
+			"offset":  offset,
+			"hasMore": seen > limit,
+			"search":  search,
+		},
+	})
 }
 
 func (s *Server) handleAdminUpdateLicense(w http.ResponseWriter, r *http.Request) {
