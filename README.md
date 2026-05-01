@@ -13,7 +13,7 @@ This first backend scaffold includes:
 - Postgres connection plumbing
 - S3-compatible object storage client for R2, AWS S3, MinIO, Wasabi, Backblaze, and similar providers
 - Initial Postgres schema for licenses, activations, tasks, credit ledger, and service profiles
-- Dockerfile, Docker Compose, and GitHub Actions build flow
+- Lightweight Dockerfile, backend-only Docker Compose, and GitHub Actions build flow
 
 Implemented admin/runtime endpoints:
 
@@ -64,7 +64,9 @@ npm --prefix web/admin run build
 docker compose up --build
 ```
 
-Compose publishes Postgres on host port `15432` by default to avoid colliding with a local Postgres on `5432`. Override `POSTGRES_PORT` if needed.
+The default Compose file starts only the backend container. Postgres and S3/R2 are external dependencies configured through `.env`; they are not bundled into the backend deployment.
+
+For local development, point `DATABASE_URL` at a local Postgres, Railway Postgres, Neon/Supabase, or any reachable Postgres instance. Point `S3_*` at R2 or another S3-compatible bucket.
 
 For backend-only local runs outside Docker, build the admin frontend once before `go run`:
 
@@ -78,12 +80,6 @@ Health:
 ```bash
 curl http://127.0.0.1:8787/health
 curl http://127.0.0.1:8787/ready
-```
-
-MinIO console:
-
-```text
-http://127.0.0.1:9001
 ```
 
 ## R2 Example
@@ -100,6 +96,6 @@ S3_FORCE_PATH_STYLE=true
 
 ## Railway
 
-Railway can build the `Dockerfile` directly. Add Postgres as a Railway service, set `DATABASE_URL`, and configure the S3 variables for R2 or another provider.
+Railway can build the `Dockerfile` directly. The backend service is a single container; add Railway Postgres or another managed Postgres separately, set `DATABASE_URL`, and configure the S3 variables for R2 or another provider.
 
 Use [.env.production.example](.env.production.example) as the minimal Railway variable template. See [docs/deployment.md](docs/deployment.md) for Railway, VPS Docker Compose, R2/S3, and Cloudflare SPA wiring.

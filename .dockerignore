@@ -1,7 +1,11 @@
 .git
 .github
+deploy
+docs
 .env
 .env.*
+README.md
+docker-compose.yml
 bin
 tmp
 .DS_Store

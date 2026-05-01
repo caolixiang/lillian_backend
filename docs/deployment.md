@@ -13,9 +13,19 @@ This backend replaces the Cloudflare Worker backend. Cloudflare should serve onl
 4. Configure the SPA Worker/Pages `API_BASE_URL` or equivalent config value to the backend domain.
 5. Redeploy the SPA.
 
+## Deployment Model
+
+The Docker image runs only the Lillian backend. It contains:
+
+- the Go backend binary
+- the built `/admin` frontend assets embedded in the binary
+- SQL migration files
+
+It does not start or bundle Postgres, MinIO, R2, or any queue service. Postgres and S3/R2 are external dependencies connected through environment variables. This keeps Railway, VPS, and other container platforms using the same simple deployment shape.
+
 ## Railway Required Variables
 
-Railway should be the default target. Add a Railway Postgres service and set the backend service variables below.
+Railway should be the default target. Add Railway Postgres or use any managed Postgres connection string, then set the backend service variables below.
 
 Railway usually injects `PORT` automatically. Do not hard-code `PORT` unless the platform asks you to.
 
@@ -53,8 +63,8 @@ Defaults you normally do not need to set on Railway:
 Railway can build this repository from the `Dockerfile`. The Docker build compiles the Vite admin frontend first, embeds the generated files into the Go binary, and then builds the backend service.
 
 1. Create a Railway project from this repo.
-2. Add a Railway Postgres service.
-3. Set `DATABASE_URL` to `${{Postgres.DATABASE_URL}}` or the Postgres connection string Railway provides.
+2. Add Railway Postgres, or prepare another managed Postgres database.
+3. Set `DATABASE_URL` to `${{Postgres.DATABASE_URL}}` or your managed Postgres connection string.
 4. Set the required variables above.
 5. Configure R2 or another S3-compatible provider with the `S3_*` variables.
 6. Deploy.
@@ -69,16 +79,7 @@ Notes:
 
 ## VPS With Docker Compose
 
-For a single VPS, use Docker Compose with the backend and Postgres. Use R2 or another external S3-compatible bucket for images.
-
-These VPS-only variables are needed when you run the bundled Postgres container:
-
-```env
-POSTGRES_USER=lillian
-POSTGRES_PASSWORD=replace-with-postgres-password
-POSTGRES_DB=lillian
-DATABASE_URL=postgres://lillian:replace-with-postgres-password@postgres:5432/lillian?sslmode=disable
-```
+For a VPS, use Docker Compose for the backend container only. Run Postgres separately, use a managed Postgres, or point at a database you already operate. Use R2 or another external S3-compatible bucket for images.
 
 Example:
 
@@ -90,32 +91,11 @@ services:
     env_file: .env
     ports:
       - "8787:8787"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: lillian
-      POSTGRES_PASSWORD: replace-with-password
-      POSTGRES_DB: lillian
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lillian -d lillian"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-volumes:
-  postgres-data:
 ```
 
 Use a reverse proxy such as Caddy, Nginx, or Traefik for HTTPS and the public domain.
 
-If the VPS is only for backend compute, do not store images on local disk. Keep image output in S3/R2 so the backend can be moved without migrating generated images.
+If Postgres runs on the same VPS, manage it as its own service outside this compose file and set `DATABASE_URL` to that service's reachable address. If the VPS is only for backend compute, do not store images on local disk. Keep image output in S3/R2 so the backend can be moved without migrating generated images.
 
 ## Cloudflare SPA Wiring
 

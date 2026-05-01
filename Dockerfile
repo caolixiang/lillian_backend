@@ -14,7 +14,7 @@ FROM golang:1.25-alpine AS build
 WORKDIR /src
 ARG VERSION=dev
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates
 
 COPY go.mod go.sum* ./
 RUN go mod download
@@ -30,7 +30,7 @@ RUN VERSION_VALUE="${VERSION}" \
 
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 backend
+RUN apk add --no-cache ca-certificates && adduser -D -H -u 10001 backend
 
 WORKDIR /app
 
