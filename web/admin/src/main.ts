@@ -20,6 +20,7 @@ interface ServiceProfile {
   apiBaseUrl: string
   model: string
   apiMode: string
+  codexCli?: boolean
   priority: number
   status: string
   hasApiKey: boolean
@@ -374,10 +375,10 @@ function renderLicenses(): void {
 function renderProfiles(): void {
   els.profilesTable.innerHTML =
     state.profiles
-      .map(
-        (profile) =>
-          `<tr><td>${h(profile.label)}</td><td><span class="pill">${h(profile.tierBucket)}</span></td><td>${h(profile.model)}</td><td>${h(profile.priority)}</td><td>${statusPill(profile.status)}</td><td>${profile.hasApiKey ? '<span class="pill ok">已保存</span>' : '<span class="pill bad">缺失</span>'}</td><td><div class="actions"><button class="small" type="button" data-edit-profile="${h(profile.id)}">修改</button><button class="small danger" type="button" data-delete-profile="${h(profile.id)}">删除</button></div></td></tr>`,
-      )
+      .map((profile) => {
+        const enabled = profile.status === 'active'
+        return `<tr><td>${h(profile.label)}</td><td><span class="pill">${h(profile.tierBucket)}</span></td><td>${h(profile.model)}</td><td>${h(profile.priority)}</td><td>${statusPill(profile.status)}</td><td>${profile.hasApiKey ? '<span class="pill ok">已保存</span>' : '<span class="pill bad">缺失</span>'}</td><td><div class="actions"><button class="small" type="button" data-edit-profile="${h(profile.id)}">修改</button><button class="small" type="button" data-toggle-profile="${h(profile.id)}">${enabled ? '关闭' : '启用'}</button><button class="small danger" type="button" data-delete-profile="${h(profile.id)}">删除</button></div></td></tr>`
+      })
       .join('') || '<tr><td colspan="7">暂无服务商</td></tr>'
 }
 
@@ -652,6 +653,34 @@ async function handleDocumentClick(event: MouseEvent): Promise<void> {
   if (target.dataset.editProfile) {
     const profile = state.profiles.find((item) => item.id === target.dataset.editProfile)
     if (profile) loadProfileForm(profile)
+  }
+
+  if (target.dataset.toggleProfile && target instanceof HTMLButtonElement) {
+    const profile = state.profiles.find((item) => item.id === target.dataset.toggleProfile)
+    if (!profile) return
+    const nextStatus = profile.status === 'active' ? 'disabled' : 'active'
+    target.disabled = true
+    try {
+      await api<ServiceProfile>('/admin/service-profiles', {
+        method: 'POST',
+        body: JSON.stringify({
+          id: profile.id,
+          label: profile.label,
+          tierBucket: profile.tierBucket,
+          apiBaseUrl: profile.apiBaseUrl,
+          apiMode: profile.apiMode,
+          codexCli: Boolean(profile.codexCli),
+          priority: profile.priority,
+          status: nextStatus,
+        }),
+      })
+      message(els.profileMessage, nextStatus === 'active' ? '服务商已启用' : '服务商已关闭', 'ok')
+      await loadProfiles()
+    } catch (error) {
+      message(els.profileMessage, (error as Error).message, 'bad')
+    } finally {
+      target.disabled = false
+    }
   }
 
   if (target.dataset.deleteProfile && target instanceof HTMLButtonElement) {

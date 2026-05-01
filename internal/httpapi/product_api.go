@@ -408,7 +408,7 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 		APIKey      string `json:"apiKey"`
 		Model       string `json:"model"`
 		APIMode     string `json:"apiMode"`
-		CodexCLI    bool   `json:"codexCli"`
+		CodexCLI    *bool  `json:"codexCli"`
 		Priority    int    `json:"priority"`
 		Status      string `json:"status"`
 	}
@@ -428,6 +428,7 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 	if body.Status == "disabled" {
 		status = "disabled"
 	}
+	var disabledUntil any
 	if apiBaseURL == "" {
 		errorJSON(w, http.StatusBadRequest, "Base URL 为必填")
 		return
@@ -461,6 +462,13 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 	if existing != nil {
 		apiKeyCiphertext = existing.APIKeyCiphertext
 	}
+	codexCLI := false
+	if existing != nil {
+		codexCLI = existing.CodexCLI
+	}
+	if body.CodexCLI != nil {
+		codexCLI = *body.CodexCLI
+	}
 	if apiKey != "" {
 		apiKeyCiphertext, err = s.encryptSecret(apiKey)
 		if err != nil {
@@ -482,8 +490,8 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO service_profiles (
 			id, label, tier_bucket, api_base_url, api_key_ciphertext, model, api_mode,
-			codex_cli, priority, status, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			codex_cli, priority, status, disabled_until, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT(id) DO UPDATE SET
 			label = excluded.label,
 			tier_bucket = excluded.tier_bucket,
@@ -494,8 +502,9 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 			codex_cli = excluded.codex_cli,
 			priority = excluded.priority,
 			status = excluded.status,
+			disabled_until = excluded.disabled_until,
 			updated_at = excluded.updated_at
-	`, id, label, tierBucket, normalizedBase, apiKeyCiphertext, model, apiMode, body.CodexCLI, priority, status, createdAt, now)
+	`, id, label, tierBucket, normalizedBase, apiKeyCiphertext, model, apiMode, codexCLI, priority, status, disabledUntil, createdAt, now)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -509,7 +518,7 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 		APIKeyCiphertext: apiKeyCiphertext,
 		Model:            model,
 		APIMode:          apiMode,
-		CodexCLI:         body.CodexCLI,
+		CodexCLI:         codexCLI,
 		Priority:         priority,
 		Status:           status,
 		CreatedAt:        createdAt,
