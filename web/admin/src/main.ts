@@ -23,8 +23,15 @@ interface ServiceProfile {
   apiMode: string
   codexCli?: boolean
   priority: number
+  maxConcurrent?: number
   status: string
   hasApiKey: boolean
+}
+
+interface RuntimeSettings {
+  imageGlobalConcurrency: number
+  imageProviderDefaultConcurrency: number
+  upstreamTimeoutSeconds: number
 }
 
 interface CreateLicenseResponse {
@@ -52,6 +59,10 @@ interface ServiceProfileListResponse {
   serviceProfiles: ServiceProfile[]
 }
 
+interface RuntimeSettingsResponse {
+  settings: RuntimeSettings
+}
+
 interface AdminState {
   token: string
   profiles: ServiceProfile[]
@@ -65,6 +76,7 @@ interface AdminState {
   licenseOffset: number
   licenseHasMore: boolean
   licenseSearch: string
+  runtimeSettings: RuntimeSettings
 }
 
 const state: AdminState = {
@@ -80,6 +92,11 @@ const state: AdminState = {
   licenseOffset: 0,
   licenseHasMore: false,
   licenseSearch: '',
+  runtimeSettings: {
+    imageGlobalConcurrency: 6,
+    imageProviderDefaultConcurrency: 2,
+    upstreamTimeoutSeconds: 600,
+  },
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -146,6 +163,22 @@ app.innerHTML = `
             </form>
           </div>
         </section>
+        <section>
+          <div class="section-head"><h2>运行设置</h2></div>
+          <div class="body">
+            <form id="runtimeSettingsForm" class="form">
+              <label>全局生图并发<input name="imageGlobalConcurrency" type="number" min="1" max="100" value="6"></label>
+              <label>默认服务商并发<input name="imageProviderDefaultConcurrency" type="number" min="1" max="100" value="2"></label>
+              <label>上游超时秒数<input name="upstreamTimeoutSeconds" type="number" min="60" max="1800" value="600"></label>
+              <p class="hint">这些设置保存在数据库，不需要改 ENV。全局生图并发限制同时连到上游的同步生图任务总数；服务商可单独覆盖并发，填 0 时使用默认服务商并发；上游超时用于一次同步生成和取图。</p>
+              <div class="actions">
+                <button class="primary" type="submit">保存运行设置</button>
+                <button id="refreshRuntimeSettings" type="button">刷新</button>
+              </div>
+              <div id="runtimeSettingsMessage" class="message"></div>
+            </form>
+          </div>
+        </section>
       </div>
 
       <div class="stack">
@@ -195,7 +228,7 @@ app.innerHTML = `
             </div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>名称</th><th>桶</th><th>模型</th><th>优先级</th><th>状态</th><th>密钥</th><th>操作</th></tr></thead>
+                <thead><tr><th>名称</th><th>桶</th><th>模型</th><th>优先级</th><th>并发</th><th>状态</th><th>密钥</th><th>操作</th></tr></thead>
                 <tbody id="profilesTable"></tbody>
               </table>
             </div>
@@ -212,9 +245,12 @@ app.innerHTML = `
                   <label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="更新时留空表示沿用原密钥"></label>
                   <div class="columns">
                     <label>优先级<input name="priority" type="number" min="1" value="100"></label>
-                    <label>状态<select name="status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
+                    <label>最大并发<input name="maxConcurrent" type="number" min="0" max="100" value="0"></label>
                   </div>
-                  <label>API 模式<select name="apiMode"><option value="images">OpenAI Images</option><option value="ohmytoken">OhMyToken</option><option value="responses">Responses</option></select></label>
+                  <div class="columns">
+                    <label>状态<select name="status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
+                    <label>API 模式<select name="apiMode"><option value="images">OpenAI Images</option><option value="ohmytoken">OhMyToken</option><option value="responses">Responses</option></select></label>
+                  </div>
                   <p class="hint">模型固定为 gpt-image-2。OpenAI Images/Responses 会发送质量参数；OhMyToken 模式只发送 size、aspect_ratio、response_format。</p>
                   <div class="actions">
                     <button class="primary" type="submit">保存服务商</button>
@@ -253,6 +289,9 @@ const els = {
   licensePageInfo: mustGet<HTMLSpanElement>('licensePageInfo'),
   prevLicensePage: mustGet<HTMLButtonElement>('prevLicensePage'),
   nextLicensePage: mustGet<HTMLButtonElement>('nextLicensePage'),
+  runtimeSettingsForm: mustGet<HTMLFormElement>('runtimeSettingsForm'),
+  runtimeSettingsMessage: mustGet<HTMLDivElement>('runtimeSettingsMessage'),
+  refreshRuntimeSettings: mustGet<HTMLButtonElement>('refreshRuntimeSettings'),
   profileForm: mustGet<HTMLFormElement>('profileForm'),
   profileMessage: mustGet<HTMLDivElement>('profileMessage'),
   resetProfileForm: mustGet<HTMLButtonElement>('resetProfileForm'),
@@ -270,6 +309,7 @@ updateAuthStatus(false)
 renderCreatedKeys()
 renderLicenses()
 renderProfiles()
+renderRuntimeSettings()
 bindEvents()
 
 if (state.token) {
@@ -434,9 +474,16 @@ function renderProfiles(): void {
     state.profiles
       .map((profile) => {
         const enabled = profile.status === 'active'
-        return `<tr><td>${h(profile.label)}</td><td><span class="pill">${h(profile.tierBucket)}</span></td><td>${h(profile.model)}</td><td>${h(profile.priority)}</td><td>${statusPill(profile.status)}</td><td>${profile.hasApiKey ? '<span class="pill ok">已保存</span>' : '<span class="pill bad">缺失</span>'}</td><td><div class="actions"><button class="small" type="button" data-edit-profile="${h(profile.id)}">修改</button><button class="small" type="button" data-toggle-profile="${h(profile.id)}">${enabled ? '关闭' : '启用'}</button><button class="small danger" type="button" data-delete-profile="${h(profile.id)}">删除</button></div></td></tr>`
+        const providerConcurrency = Number(profile.maxConcurrent || 0) > 0 ? String(profile.maxConcurrent) : '默认'
+        return `<tr><td>${h(profile.label)}</td><td><span class="pill">${h(profile.tierBucket)}</span></td><td>${h(profile.model)}</td><td>${h(profile.priority)}</td><td>${h(providerConcurrency)}</td><td>${statusPill(profile.status)}</td><td>${profile.hasApiKey ? '<span class="pill ok">已保存</span>' : '<span class="pill bad">缺失</span>'}</td><td><div class="actions"><button class="small" type="button" data-edit-profile="${h(profile.id)}">修改</button><button class="small" type="button" data-toggle-profile="${h(profile.id)}">${enabled ? '关闭' : '启用'}</button><button class="small danger" type="button" data-delete-profile="${h(profile.id)}">删除</button></div></td></tr>`
       })
-      .join('') || '<tr><td colspan="7">暂无服务商</td></tr>'
+      .join('') || '<tr><td colspan="8">暂无服务商</td></tr>'
+}
+
+function renderRuntimeSettings(): void {
+  field<HTMLInputElement>(els.runtimeSettingsForm, 'imageGlobalConcurrency').value = String(state.runtimeSettings.imageGlobalConcurrency)
+  field<HTMLInputElement>(els.runtimeSettingsForm, 'imageProviderDefaultConcurrency').value = String(state.runtimeSettings.imageProviderDefaultConcurrency)
+  field<HTMLInputElement>(els.runtimeSettingsForm, 'upstreamTimeoutSeconds').value = String(state.runtimeSettings.upstreamTimeoutSeconds)
 }
 
 async function loadLicenses(): Promise<void> {
@@ -468,8 +515,14 @@ async function loadProfiles(): Promise<void> {
   renderProfiles()
 }
 
+async function loadRuntimeSettings(): Promise<void> {
+  const data = await api<RuntimeSettingsResponse>('/admin/runtime-settings')
+  state.runtimeSettings = data.settings || state.runtimeSettings
+  renderRuntimeSettings()
+}
+
 async function refreshAll(): Promise<void> {
-  await Promise.all([loadLicenses(), loadProfiles()])
+  await Promise.all([loadLicenses(), loadProfiles(), loadRuntimeSettings()])
   setAdminVisible(true)
   updateAuthStatus(true)
 }
@@ -484,6 +537,7 @@ function resetProfileForm(messageText = '', visible = false): void {
   field<HTMLInputElement>(els.profileForm, 'id').value = ''
   field<HTMLSelectElement>(els.profileForm, 'tierBucket').value = '1k'
   field<HTMLInputElement>(els.profileForm, 'priority').value = '100'
+  field<HTMLInputElement>(els.profileForm, 'maxConcurrent').value = '0'
   field<HTMLSelectElement>(els.profileForm, 'apiMode').value = 'images'
   field<HTMLSelectElement>(els.profileForm, 'status').value = 'active'
   els.deleteProfileButton.hidden = true
@@ -501,6 +555,7 @@ function loadProfileForm(profile: ServiceProfile): void {
   field<HTMLInputElement>(els.profileForm, 'apiKey').value = ''
   field<HTMLSelectElement>(els.profileForm, 'apiMode').value = profile.apiMode || 'images'
   field<HTMLInputElement>(els.profileForm, 'priority').value = String(profile.priority || 100)
+  field<HTMLInputElement>(els.profileForm, 'maxConcurrent').value = String(profile.maxConcurrent || 0)
   field<HTMLSelectElement>(els.profileForm, 'status').value = profile.status || 'active'
   els.deleteProfileButton.hidden = !state.editingProfileId
   message(els.profileMessage, '已载入服务商，保存时 API Key 留空会沿用原密钥。')
@@ -624,6 +679,30 @@ function bindEvents(): void {
       .catch((error: Error) => message(els.profileMessage, error.message, 'bad'))
   })
 
+  els.refreshRuntimeSettings.addEventListener('click', () => {
+    loadRuntimeSettings()
+      .then(() => message(els.runtimeSettingsMessage, '运行设置已刷新', 'ok'))
+      .catch((error: Error) => message(els.runtimeSettingsMessage, error.message, 'bad'))
+  })
+
+  els.runtimeSettingsForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    message(els.runtimeSettingsMessage, '正在保存...')
+    try {
+      const payload = {
+        imageGlobalConcurrency: Number(formValue(els.runtimeSettingsForm, 'imageGlobalConcurrency') || 6),
+        imageProviderDefaultConcurrency: Number(formValue(els.runtimeSettingsForm, 'imageProviderDefaultConcurrency') || 2),
+        upstreamTimeoutSeconds: Number(formValue(els.runtimeSettingsForm, 'upstreamTimeoutSeconds') || 600),
+      }
+      const data = await api<RuntimeSettingsResponse>('/admin/runtime-settings', { method: 'POST', body: JSON.stringify(payload) })
+      state.runtimeSettings = data.settings || payload
+      renderRuntimeSettings()
+      message(els.runtimeSettingsMessage, '运行设置已保存', 'ok')
+    } catch (error) {
+      message(els.runtimeSettingsMessage, (error as Error).message, 'bad')
+    }
+  })
+
   document.querySelectorAll<HTMLButtonElement>('.tab').forEach((button) => {
     button.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'))
@@ -678,6 +757,7 @@ function bindEvents(): void {
         apiKey: formValue(els.profileForm, 'apiKey').trim(),
         apiMode: formValue(els.profileForm, 'apiMode'),
         priority: Number(formValue(els.profileForm, 'priority') || 100),
+        maxConcurrent: Number(formValue(els.profileForm, 'maxConcurrent') || 0),
         status: formValue(els.profileForm, 'status'),
       }
       const profile = await api<ServiceProfile>('/admin/service-profiles', { method: 'POST', body: JSON.stringify(payload) })
@@ -793,6 +873,7 @@ async function handleDocumentClick(event: MouseEvent): Promise<void> {
           apiMode: profile.apiMode,
           codexCli: Boolean(profile.codexCli),
           priority: profile.priority,
+          maxConcurrent: Number(profile.maxConcurrent || 0),
           status: nextStatus,
         }),
       })

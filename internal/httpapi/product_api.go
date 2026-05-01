@@ -61,6 +61,7 @@ type serviceProfileRow struct {
 	APIMode          string
 	CodexCLI         bool
 	Priority         int
+	MaxConcurrent    int
 	Status           string
 	SelectionCount   int
 	SuccessCount     int
@@ -396,7 +397,7 @@ func (s *Server) handleAdminListServiceProfiles(w http.ResponseWriter, r *http.R
 	defer cancel()
 	rows, err := s.db.Query(ctx, `
 		SELECT id, label, tier_bucket, api_base_url, api_key_ciphertext, model, api_mode,
-			codex_cli, priority, status, selection_count, success_count, failure_count,
+			codex_cli, priority, max_concurrent, status, selection_count, success_count, failure_count,
 			last_selected_at, last_failed_at, disabled_until, created_at, updated_at
 		FROM service_profiles
 		WHERE status <> 'deleted'
@@ -431,17 +432,18 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 	}
 
 	var body struct {
-		ID          string `json:"id"`
-		Label       string `json:"label"`
-		TierBucket  string `json:"tierBucket"`
-		TierBucket2 string `json:"tier_bucket"`
-		APIBaseURL  string `json:"apiBaseUrl"`
-		APIKey      string `json:"apiKey"`
-		Model       string `json:"model"`
-		APIMode     string `json:"apiMode"`
-		CodexCLI    *bool  `json:"codexCli"`
-		Priority    int    `json:"priority"`
-		Status      string `json:"status"`
+		ID            string `json:"id"`
+		Label         string `json:"label"`
+		TierBucket    string `json:"tierBucket"`
+		TierBucket2   string `json:"tier_bucket"`
+		APIBaseURL    string `json:"apiBaseUrl"`
+		APIKey        string `json:"apiKey"`
+		Model         string `json:"model"`
+		APIMode       string `json:"apiMode"`
+		CodexCLI      *bool  `json:"codexCli"`
+		Priority      int    `json:"priority"`
+		MaxConcurrent *int   `json:"maxConcurrent"`
+		Status        string `json:"status"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -500,6 +502,13 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 	if body.CodexCLI != nil {
 		codexCLI = *body.CodexCLI
 	}
+	maxConcurrent := 0
+	if existing != nil {
+		maxConcurrent = existing.MaxConcurrent
+	}
+	if body.MaxConcurrent != nil {
+		maxConcurrent = boundedInt(*body.MaxConcurrent, 0, 100, 0)
+	}
 	if apiKey != "" {
 		apiKeyCiphertext, err = s.encryptSecret(apiKey)
 		if err != nil {
@@ -521,8 +530,8 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO service_profiles (
 			id, label, tier_bucket, api_base_url, api_key_ciphertext, model, api_mode,
-			codex_cli, priority, status, disabled_until, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			codex_cli, priority, max_concurrent, status, disabled_until, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT(id) DO UPDATE SET
 			label = excluded.label,
 			tier_bucket = excluded.tier_bucket,
@@ -532,10 +541,11 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 			api_mode = excluded.api_mode,
 			codex_cli = excluded.codex_cli,
 			priority = excluded.priority,
+			max_concurrent = excluded.max_concurrent,
 			status = excluded.status,
 			disabled_until = excluded.disabled_until,
 			updated_at = excluded.updated_at
-	`, id, label, tierBucket, normalizedBase, apiKeyCiphertext, model, apiMode, codexCLI, priority, status, disabledUntil, createdAt, now)
+	`, id, label, tierBucket, normalizedBase, apiKeyCiphertext, model, apiMode, codexCLI, priority, maxConcurrent, status, disabledUntil, createdAt, now)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -551,6 +561,7 @@ func (s *Server) handleAdminUpsertServiceProfile(w http.ResponseWriter, r *http.
 		APIMode:          apiMode,
 		CodexCLI:         codexCLI,
 		Priority:         priority,
+		MaxConcurrent:    maxConcurrent,
 		Status:           status,
 		CreatedAt:        createdAt,
 		UpdatedAt:        now,
@@ -691,7 +702,7 @@ func (s *Server) licenseByHash(ctx context.Context, keyHash string) (licenseRow,
 func (s *Server) serviceProfileByID(ctx context.Context, id string) (*serviceProfileRow, error) {
 	row := s.db.QueryRow(ctx, `
 		SELECT id, label, tier_bucket, api_base_url, api_key_ciphertext, model, api_mode,
-			codex_cli, priority, status, selection_count, success_count, failure_count,
+			codex_cli, priority, max_concurrent, status, selection_count, success_count, failure_count,
 			last_selected_at, last_failed_at, disabled_until, created_at, updated_at
 		FROM service_profiles
 		WHERE id = $1
@@ -737,6 +748,7 @@ func scanServiceProfile(row scanner) (serviceProfileRow, error) {
 		&profile.APIMode,
 		&profile.CodexCLI,
 		&profile.Priority,
+		&profile.MaxConcurrent,
 		&profile.Status,
 		&profile.SelectionCount,
 		&profile.SuccessCount,
@@ -782,6 +794,7 @@ func publicServiceProfile(profile serviceProfileRow) map[string]any {
 		"apiMode":        profile.APIMode,
 		"codexCli":       profile.CodexCLI,
 		"priority":       profile.Priority,
+		"maxConcurrent":  profile.MaxConcurrent,
 		"status":         profile.Status,
 		"hasApiKey":      profile.APIKeyCiphertext != "",
 		"selectionCount": profile.SelectionCount,

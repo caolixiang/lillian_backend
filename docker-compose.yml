@@ -13,9 +13,6 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-replace-with-admin-token}
       LICENSE_KEY_PEPPER: ${LICENSE_KEY_PEPPER:-replace-with-license-key-pepper}
       PROVIDER_CREDENTIAL_SECRET: ${PROVIDER_CREDENTIAL_SECRET:-replace-with-provider-secret}
-      UPSTREAM_TIMEOUT_SECONDS: ${UPSTREAM_TIMEOUT_SECONDS:-600}
-      TASK_POLL_INTERVAL_SECONDS: ${TASK_POLL_INTERVAL_SECONDS:-2}
-      TASK_WORKER_CONCURRENCY: ${TASK_WORKER_CONCURRENCY:-2}
       S3_ENDPOINT: http://minio:9000
       S3_REGION: us-east-1
       S3_BUCKET: lillian-images

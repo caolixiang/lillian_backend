@@ -13,18 +13,20 @@ import (
 )
 
 type Server struct {
-	cfg    config.Config
-	db     *pgxpool.Pool
-	store  storage.ObjectStore
-	logger *log.Logger
+	cfg            config.Config
+	db             *pgxpool.Pool
+	store          storage.ObjectStore
+	logger         *log.Logger
+	upstreamClient *http.Client
 }
 
 func New(cfg config.Config, db *pgxpool.Pool, store storage.ObjectStore, logger *log.Logger) *Server {
 	return &Server{
-		cfg:    cfg,
-		db:     db,
-		store:  store,
-		logger: logger,
+		cfg:            cfg,
+		db:             db,
+		store:          store,
+		logger:         logger,
+		upstreamClient: newUpstreamHTTPClient(),
 	}
 }
 
@@ -58,7 +60,21 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/admin/service-profiles", s.handleAdminListServiceProfiles)
 	r.Post("/admin/service-profiles", s.handleAdminUpsertServiceProfile)
 	r.Delete("/admin/service-profiles/{id}", s.handleAdminDeleteServiceProfile)
+	r.Get("/admin/runtime-settings", s.handleAdminGetRuntimeSettings)
+	r.Post("/admin/runtime-settings", s.handleAdminUpdateRuntimeSettings)
+	r.Patch("/admin/runtime-settings", s.handleAdminUpdateRuntimeSettings)
 	return r
+}
+
+func newUpstreamHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 128
+	transport.MaxIdleConnsPerHost = 32
+	transport.MaxConnsPerHost = 0
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.TLSHandshakeTimeout = 10 * time.Second
+	transport.ExpectContinueTimeout = time.Second
+	return &http.Client{Transport: transport}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

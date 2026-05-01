@@ -25,6 +25,8 @@ Implemented admin/runtime endpoints:
 - `GET /admin/service-profiles`
 - `POST /admin/service-profiles`
 - `DELETE /admin/service-profiles/:id`
+- `GET /admin/runtime-settings`
+- `POST /admin/runtime-settings`
 - `POST /api/keys/activate`
 - `GET /api/me/credits`
 - `POST /api/tasks`
@@ -40,15 +42,18 @@ Implemented admin/runtime endpoints:
 - `ADMIN_TOKEN` - admin bearer token
 - `LICENSE_KEY_PEPPER` - stable secret used for license key hashing
 - `PROVIDER_CREDENTIAL_SECRET` - stable secret used to encrypt provider credentials
-- `UPSTREAM_TIMEOUT_SECONDS` - image provider request timeout, default `600`
-- `TASK_POLL_INTERVAL_SECONDS` - future task worker poll interval, default `2`
-- `TASK_WORKER_CONCURRENCY` - future task worker concurrency, default `2`
 - `S3_ENDPOINT` - S3-compatible endpoint, for example an R2 or MinIO endpoint
 - `S3_REGION` - S3 region, use `auto` for R2
 - `S3_BUCKET` - image bucket
 - `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` - S3 credentials
 - `S3_PUBLIC_BASE_URL` - public image base URL, usually a custom domain or public bucket URL
 - `S3_FORCE_PATH_STYLE` - set `true` for MinIO and many S3-compatible providers
+
+Runtime image settings are stored in Postgres and edited from `/admin`, not in `.env`:
+
+- Global image concurrency: total number of upstream synchronous image tasks allowed to run at once.
+- Default provider concurrency: per-provider limit when the provider does not override it.
+- Upstream timeout seconds: timeout for one synchronous generation call plus image retrieval.
 
 ## Local
 

@@ -43,9 +43,6 @@ Defaults you normally do not need to set on Railway:
 
 - `AUTO_MIGRATE=true`
 - `MIGRATIONS_DIR=migrations`
-- `UPSTREAM_TIMEOUT_SECONDS=600`
-- `TASK_POLL_INTERVAL_SECONDS=2`
-- `TASK_WORKER_CONCURRENCY=2`
 - `S3_REGION=auto`
 - `S3_FORCE_PATH_STYLE=true`
 
@@ -147,14 +144,21 @@ Recommended first actions:
 
 1. Create one 1K service provider.
 2. Create one HD service provider.
-3. Create a short-lived test exchange code.
-4. Activate the test code in the SPA.
-5. Generate one 1K image and one HD image.
+3. Open "运行设置" and confirm the database-backed image settings:
+   - 全局生图并发: total upstream synchronous image tasks allowed to run at the same time.
+   - 默认服务商并发: per-provider concurrency when that provider's "最大并发" is `0`.
+   - 上游超时秒数: timeout for one synchronous upstream generation and returned image retrieval.
+4. Create a short-lived test exchange code.
+5. Activate the test code in the SPA.
+6. Generate one 1K image and one HD image.
 
 ## Operational Notes
 
-- `TASK_WORKER_CONCURRENCY` controls how many in-process workers poll queued tasks.
-- Per-license concurrency is enforced by active queued/running task count and `max_concurrent`.
+- Startup ENV should be limited to infrastructure and secrets: Postgres, S3/R2, public URLs, admin password, and encryption/hash secrets.
+- Image runtime knobs live in Postgres and are edited from `/admin`, so changing concurrency or timeout does not require changing `.env`.
+- The backend starts a fixed worker pool internally, but a task can only be claimed when the database-backed global and provider concurrency limits allow it.
+- Per-license concurrency is enforced by active queued/running task count and the exchange code's `max_concurrent`.
+- Provider concurrency is enforced when queued tasks are claimed. A provider's "最大并发" of `0` means "use 默认服务商并发".
 - 1K generation prefers 1K providers. HD keys can fall back to HD providers for 1K only when no active 1K provider is selected by priority/fallback rules.
 - 2K/4K requires an HD license and an HD provider.
 - If upstream generation fails before output is stored, the backend marks the task `error` and refunds the reserved credit.

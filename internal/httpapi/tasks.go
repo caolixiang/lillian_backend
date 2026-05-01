@@ -25,6 +25,8 @@ const (
 	serviceProfileCooldownFailures = 2
 	serviceProfileCooldown         = 5 * time.Minute
 	serviceProfileFallbackRetries  = 1
+	taskWorkerSlots                = 32
+	taskClaimAdvisoryLockKey       = 741190203
 )
 
 type taskPayload struct {
@@ -73,8 +75,8 @@ func (s *Server) StartTaskWorkers(ctx context.Context) {
 		return
 	}
 	concurrency := s.cfg.TaskWorkerConcurrency
-	if concurrency <= 0 {
-		concurrency = 1
+	if concurrency < taskWorkerSlots {
+		concurrency = taskWorkerSlots
 	}
 	for i := 0; i < concurrency; i++ {
 		go s.taskWorkerLoop(ctx)
@@ -105,25 +107,19 @@ func (s *Server) taskWorkerLoop(ctx context.Context) {
 func (s *Server) processNextQueuedTask(ctx context.Context) bool {
 	taskCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	var taskID string
-	err := s.db.QueryRow(taskCtx, `
-		SELECT id
-		FROM tasks
-		WHERE status = 'queued'
-		ORDER BY created_at ASC
-		LIMIT 1
-	`).Scan(&taskID)
-	if errorsIsNoRows(err) {
-		return false
-	}
+	settings := s.loadRuntimeSettings(taskCtx)
+	task, ok, err := s.claimNextQueuedTask(taskCtx, settings)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Printf("task worker query failed: %v", err)
+			s.logger.Printf("task worker claim failed: %v", err)
 		}
 		return false
 	}
-	if err := s.processTask(ctx, taskID); err != nil && s.logger != nil {
-		s.logger.Printf("task %s failed: %v", taskID, err)
+	if !ok {
+		return false
+	}
+	if err := s.executeTask(ctx, task); err != nil && s.logger != nil {
+		s.logger.Printf("task %s failed: %v", task.ID, err)
 	}
 	return true
 }
@@ -243,14 +239,6 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), s.cfg.UpstreamTimeout+time.Minute)
-		defer cancel()
-		if err := s.processTask(bgCtx, taskID); err != nil && s.logger != nil {
-			s.logger.Printf("task %s failed: %v", taskID, err)
-		}
-	}()
-
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"id":               taskID,
 		"status":           "queued",
@@ -328,25 +316,138 @@ func (s *Server) taskForLicense(w http.ResponseWriter, r *http.Request, taskID, 
 	return task, true
 }
 
-func (s *Server) processTask(ctx context.Context, taskID string) error {
-	task, err := s.taskByID(ctx, taskID)
-	if errorsIsNoRows(err) || task.Status != "queued" {
-		return nil
-	}
+func (s *Server) claimNextQueuedTask(ctx context.Context, settings runtimeSettings) (taskRow, bool, error) {
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return err
+		return taskRow{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, taskClaimAdvisoryLockKey); err != nil {
+		return taskRow{}, false, err
 	}
 
-	startedAt := time.Now().UTC()
-	tag, err := s.db.Exec(ctx, `
+	if ok, err := s.globalTaskSlotAvailable(ctx, tx, settings); err != nil || !ok {
+		return taskRow{}, false, err
+	}
+
+	task, err := scanTaskRow(tx.QueryRow(ctx, `
+		SELECT t.id, t.license_key_id, t.activation_id, t.status, t.tier, t.requested_size,
+			t.service_profile, t.request_json, t.outputs_json, t.actual_params_json,
+			t.revised_prompts_json, t.error, t.created_at, t.updated_at, t.finished_at
+		FROM tasks t
+		JOIN service_profiles sp ON sp.id = t.service_profile
+		WHERE t.status = 'queued'
+			AND (
+				SELECT COUNT(*)
+				FROM tasks running
+				WHERE running.status = 'running'
+					AND running.service_profile = t.service_profile
+			) < CASE WHEN sp.max_concurrent > 0 THEN sp.max_concurrent ELSE $1 END
+		ORDER BY t.created_at ASC
+		LIMIT 1
+		FOR UPDATE OF t SKIP LOCKED
+	`, settings.ImageProviderDefaultConcurrency))
+	if errorsIsNoRows(err) {
+		return taskRow{}, false, nil
+	}
+	if err != nil {
+		return taskRow{}, false, err
+	}
+	if err := markTaskRunning(ctx, tx, &task); err != nil {
+		return taskRow{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return taskRow{}, false, err
+	}
+	return task, true, nil
+}
+
+func (s *Server) claimQueuedTaskByID(ctx context.Context, taskID string, settings runtimeSettings) (taskRow, bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return taskRow{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, taskClaimAdvisoryLockKey); err != nil {
+		return taskRow{}, false, err
+	}
+
+	if ok, err := s.globalTaskSlotAvailable(ctx, tx, settings); err != nil || !ok {
+		return taskRow{}, false, err
+	}
+
+	task, err := scanTaskRow(tx.QueryRow(ctx, `
+		SELECT t.id, t.license_key_id, t.activation_id, t.status, t.tier, t.requested_size,
+			t.service_profile, t.request_json, t.outputs_json, t.actual_params_json,
+			t.revised_prompts_json, t.error, t.created_at, t.updated_at, t.finished_at
+		FROM tasks t
+		JOIN service_profiles sp ON sp.id = t.service_profile
+		WHERE t.id = $2
+			AND t.status = 'queued'
+			AND (
+				SELECT COUNT(*)
+				FROM tasks running
+				WHERE running.status = 'running'
+					AND running.service_profile = t.service_profile
+			) < CASE WHEN sp.max_concurrent > 0 THEN sp.max_concurrent ELSE $1 END
+		LIMIT 1
+		FOR UPDATE OF t SKIP LOCKED
+	`, settings.ImageProviderDefaultConcurrency, taskID))
+	if errorsIsNoRows(err) {
+		return taskRow{}, false, nil
+	}
+	if err != nil {
+		return taskRow{}, false, err
+	}
+	if err := markTaskRunning(ctx, tx, &task); err != nil {
+		return taskRow{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return taskRow{}, false, err
+	}
+	return task, true, nil
+}
+
+func (s *Server) globalTaskSlotAvailable(ctx context.Context, tx pgx.Tx, settings runtimeSettings) (bool, error) {
+	var running int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM tasks WHERE status = 'running'`).Scan(&running); err != nil {
+		return false, err
+	}
+	return running < settings.ImageGlobalConcurrency, nil
+}
+
+func markTaskRunning(ctx context.Context, tx pgx.Tx, task *taskRow) error {
+	now := time.Now().UTC()
+	tag, err := tx.Exec(ctx, `
 		UPDATE tasks
 		SET status = 'running', updated_at = $1
 		WHERE id = $2 AND status = 'queued'
-	`, startedAt, taskID)
+	`, now, task.ID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() != 1 {
+		return pgx.ErrNoRows
+	}
+	task.Status = "running"
+	task.UpdatedAt = now
+	return nil
+}
+
+func (s *Server) processTask(ctx context.Context, taskID string) error {
+	settings := s.loadRuntimeSettings(ctx)
+	task, ok, err := s.claimQueuedTaskByID(ctx, taskID, settings)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return s.executeTask(ctx, task)
+}
+
+func (s *Server) executeTask(ctx context.Context, task taskRow) error {
+	if task.Status != "running" {
 		return nil
 	}
 
@@ -382,7 +483,8 @@ func (s *Server) processTask(ctx context.Context, taskID string) error {
 			break
 		}
 		profile = &next
-		_, _ = s.db.Exec(ctx, `UPDATE tasks SET service_profile = $1, updated_at = $2 WHERE id = $3`, profile.ID, time.Now().UTC(), taskID)
+		_, _ = s.db.Exec(ctx, `UPDATE tasks SET service_profile = $1, updated_at = $2 WHERE id = $3`, profile.ID, time.Now().UTC(), task.ID)
+		task.ServiceProfile = profile.ID
 	}
 	if err != nil {
 		message := strings.Join(providerErrors, "；")
@@ -395,7 +497,7 @@ func (s *Server) processTask(ctx context.Context, taskID string) error {
 
 	outputs := make([]taskOutput, 0, len(result.Images))
 	for i, image := range result.Images {
-		key := fmt.Sprintf("tasks/%s/outputs/%d.%s", taskID, i, imageExt(image.ContentType))
+		key := fmt.Sprintf("tasks/%s/outputs/%d.%s", task.ID, i, imageExt(image.ContentType))
 		if _, err := s.store.PutBytes(ctx, key, image.Bytes, image.ContentType); err != nil {
 			s.failTaskAndRefund(ctx, task, err.Error())
 			return err
@@ -415,7 +517,7 @@ func (s *Server) processTask(ctx context.Context, taskID string) error {
 			updated_at = $4,
 			finished_at = $5
 		WHERE id = $6
-	`, string(outputsJSON), string(actualParamsJSON), string(revisedPromptsJSON), finishedAt, finishedAt, taskID)
+	`, string(outputsJSON), string(actualParamsJSON), string(revisedPromptsJSON), finishedAt, finishedAt, task.ID)
 	if err != nil {
 		return err
 	}
@@ -423,7 +525,7 @@ func (s *Server) processTask(ctx context.Context, taskID string) error {
 	_, _ = s.db.Exec(ctx, `
 		INSERT INTO credit_ledger (id, license_key_id, task_id, type, amount, created_at, note)
 		VALUES ($1, $2, $3, 'consume', 0, $4, 'task completed')
-	`, ledgerID, task.LicenseKeyID, taskID, finishedAt)
+	`, ledgerID, task.LicenseKeyID, task.ID, finishedAt)
 	return nil
 }
 
@@ -432,12 +534,18 @@ func (s *Server) callImageService(ctx context.Context, profile serviceProfileRow
 	if err != nil {
 		return imageServiceResult{}, err
 	}
+	settings := s.loadRuntimeSettings(ctx)
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(settings.UpstreamTimeoutSeconds)*time.Second)
+	defer cancel()
 	requestSize, _ := normalizeTaskSize(payload.Params)
 	outputFormat := "png"
 	fallbackMime := imageMime(outputFormat)
 	isEdit := len(payload.InputImageDataURLs) > 0
 	aspectRatio := aspectRatioFromSize(requestSize)
-	client := &http.Client{Timeout: s.cfg.UpstreamTimeout}
+	client := s.upstreamClient
+	if client == nil {
+		client = newUpstreamHTTPClient()
+	}
 
 	var resp *http.Response
 	if isEdit {
@@ -487,7 +595,7 @@ func (s *Server) callImageService(ctx context.Context, profile serviceProfileRow
 		if err := writer.Close(); err != nil {
 			return imageServiceResult{}, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL(profile, "images/edits"), body)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpointURL(profile, "images/edits"), body)
 		if err != nil {
 			return imageServiceResult{}, err
 		}
@@ -517,7 +625,7 @@ func (s *Server) callImageService(ctx context.Context, profile serviceProfileRow
 			requestBody["n"] = n
 		}
 		body, _ := json.Marshal(requestBody)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL(profile, "images/generations"), bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpointURL(profile, "images/generations"), bytes.NewReader(body))
 		if err != nil {
 			return imageServiceResult{}, err
 		}
@@ -580,7 +688,7 @@ func (s *Server) callImageService(ctx context.Context, profile serviceProfileRow
 			continue
 		}
 		if item.URL != "" {
-			bytes, contentType, err := downloadImage(ctx, client, item.URL, fallbackMime)
+			bytes, contentType, err := downloadImage(requestCtx, client, item.URL, fallbackMime)
 			if err != nil {
 				return imageServiceResult{}, err
 			}
@@ -646,14 +754,18 @@ func (s *Server) publicTask(r *http.Request, task taskRow) map[string]any {
 }
 
 func (s *Server) taskByID(ctx context.Context, taskID string) (taskRow, error) {
-	var task taskRow
-	err := s.db.QueryRow(ctx, `
+	return scanTaskRow(s.db.QueryRow(ctx, `
 		SELECT id, license_key_id, activation_id, status, tier, requested_size,
 			service_profile, request_json, outputs_json, actual_params_json,
 			revised_prompts_json, error, created_at, updated_at, finished_at
 		FROM tasks
 		WHERE id = $1
-	`, taskID).Scan(
+	`, taskID))
+}
+
+func scanTaskRow(row scanner) (taskRow, error) {
+	var task taskRow
+	err := row.Scan(
 		&task.ID,
 		&task.LicenseKeyID,
 		&task.ActivationID,
@@ -680,7 +792,7 @@ func (s *Server) selectServiceProfile(ctx context.Context, tier, size, sizeTier 
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT id, label, tier_bucket, api_base_url, api_key_ciphertext, model, api_mode,
-			codex_cli, priority, status, selection_count, success_count, failure_count,
+			codex_cli, priority, max_concurrent, status, selection_count, success_count, failure_count,
 			last_selected_at, last_failed_at, disabled_until, created_at, updated_at
 		FROM service_profiles
 		WHERE tier_bucket = ANY($1)
