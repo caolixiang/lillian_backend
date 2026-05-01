@@ -726,10 +726,7 @@ func (s *Server) callImageService(ctx context.Context, profile serviceProfileRow
 }
 
 func (s *Server) publicTask(r *http.Request, task taskRow) map[string]any {
-	base := strings.TrimRight(s.cfg.PublicAPIBaseURL, "/")
-	if base == "" {
-		base = "http://" + r.Host
-	}
+	base := s.publicBaseURL(r)
 	outputs := decodeOutputs(task.OutputsJSON)
 	publicOutputs := make([]map[string]any, 0, len(outputs))
 	for i, output := range outputs {

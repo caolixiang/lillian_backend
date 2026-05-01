@@ -49,6 +49,11 @@ Implemented admin/runtime endpoints:
 - `S3_PUBLIC_BASE_URL` - public image base URL, usually a custom domain or public bucket URL
 - `S3_FORCE_PATH_STYLE` - set `true` for MinIO and many S3-compatible providers
 
+Optional deployment overrides:
+
+- `CORS_ORIGIN` - browser origin allowlist; defaults to `*`.
+- `PUBLIC_API_BASE_URL` - public backend URL override; defaults to the current request's forwarded host/protocol.
+
 Runtime image settings are stored in Postgres and edited from `/admin`, not in `.env`:
 
 - Global image concurrency: total number of upstream synchronous image tasks allowed to run at once.

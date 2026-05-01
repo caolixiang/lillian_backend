@@ -35,24 +35,62 @@ func TestHealth(t *testing.T) {
 }
 
 func TestConfig(t *testing.T) {
-	server := New(config.Config{
-		PublicAPIBaseURL: "https://api.example.com",
-		CORSOrigin:       "*",
-	}, nil, nil, nil)
+	t.Run("uses configured public API base URL", func(t *testing.T) {
+		server := New(config.Config{
+			PublicAPIBaseURL: "https://api.example.com",
+			CORSOrigin:       "*",
+		}, nil, nil, nil)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/config.json", nil)
+		server.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if payload["apiBaseUrl"] != "https://api.example.com" {
+			t.Fatalf("apiBaseUrl = %v", payload["apiBaseUrl"])
+		}
+	})
+
+	t.Run("derives public API base URL from forwarded request", func(t *testing.T) {
+		server := New(config.Config{CORSOrigin: "*"}, nil, nil, nil)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "http://internal.example/config.json", nil)
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.Header.Set("X-Forwarded-Host", "api.example.com")
+		server.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if payload["apiBaseUrl"] != "https://api.example.com" {
+			t.Fatalf("apiBaseUrl = %v", payload["apiBaseUrl"])
+		}
+	})
+}
+
+func TestCorsDefaultsToWildcard(t *testing.T) {
+	server := New(config.Config{}, nil, nil, nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/config.json", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/config.json", nil)
 	server.Handler().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if payload["apiBaseUrl"] != "https://api.example.com" {
-		t.Fatalf("apiBaseUrl = %v", payload["apiBaseUrl"])
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
 	}
 }
 

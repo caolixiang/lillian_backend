@@ -34,8 +34,6 @@ Required:
 ```env
 APP_ENV=production
 PORT=8787
-CORS_ORIGIN=https://app.example.com
-PUBLIC_API_BASE_URL=https://api.example.com
 
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 AUTO_MIGRATE=true
@@ -61,6 +59,11 @@ These values have safe defaults in code but stay in the env templates so all thr
 - `S3_REGION=auto`
 - `S3_FORCE_PATH_STYLE=true`
 
+These values are optional overrides and usually do not need to be set:
+
+- `CORS_ORIGIN`: defaults to `*`. Set it only when you want to restrict browser callers to a specific frontend origin.
+- `PUBLIC_API_BASE_URL`: defaults to the current request host/protocol. Set it only when a reverse proxy hides the real public backend URL and does not send standard forwarded headers.
+
 `LICENSE_KEY_PEPPER` and `PROVIDER_CREDENTIAL_SECRET` must remain stable. Changing either one breaks lookup/decryption for existing exchange codes, activations, or service provider credentials.
 
 ## Railway
@@ -78,8 +81,8 @@ Railway can build this repository from the `Dockerfile`. The Docker build compil
 
 Notes:
 
-- Set `PUBLIC_API_BASE_URL` to the public Railway/custom domain, not `localhost`.
-- Set `CORS_ORIGIN` to the Cloudflare SPA domain. Use `*` only for temporary debugging.
+- You do not need to know the Railway/custom domain before the first deploy. `/config.json` and task image URLs derive their base URL from the incoming request when `PUBLIC_API_BASE_URL` is unset.
+- CORS defaults to `*`, which fits this app because browser auth is sent through explicit bearer tokens rather than cookies. Restrict `CORS_ORIGIN` later only if you want a tighter browser origin policy.
 - The backend runs migrations on startup by default. Set `AUTO_MIGRATE=false` only after you have a separate migration process.
 
 ## VPS With Docker Compose

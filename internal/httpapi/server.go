@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/CookSleep/lillian_backend/internal/config"
@@ -123,8 +124,43 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"apiBaseUrl": s.cfg.PublicAPIBaseURL,
+		"apiBaseUrl": s.publicBaseURL(r),
 	})
+}
+
+func (s *Server) publicBaseURL(r *http.Request) string {
+	if base := strings.TrimRight(s.cfg.PublicAPIBaseURL, "/"); base != "" {
+		return base
+	}
+
+	proto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto"))
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+
+	host := firstHeaderValue(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	if host == "" {
+		return ""
+	}
+	return proto + "://" + host
+}
+
+func firstHeaderValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if before, _, ok := strings.Cut(value, ","); ok {
+		value = before
+	}
+	return strings.TrimSpace(value)
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {

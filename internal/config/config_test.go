@@ -20,6 +20,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Version != "1.2.3" {
 		t.Fatalf("Version = %q", cfg.Version)
 	}
+	if cfg.PublicAPIBaseURL != "" {
+		t.Fatalf("PublicAPIBaseURL = %q", cfg.PublicAPIBaseURL)
+	}
+	if cfg.CORSOrigin != "*" {
+		t.Fatalf("CORSOrigin = %q", cfg.CORSOrigin)
+	}
 	if cfg.UpstreamTimeout != 10*time.Minute {
 		t.Fatalf("UpstreamTimeout = %s", cfg.UpstreamTimeout)
 	}

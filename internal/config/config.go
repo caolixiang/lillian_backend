@@ -63,7 +63,7 @@ func Load(version string) (Config, error) {
 		Version:               version,
 		Environment:           stringEnv("APP_ENV", "local"),
 		ListenAddr:            listenAddr,
-		PublicAPIBaseURL:      strings.TrimRight(stringEnv("PUBLIC_API_BASE_URL", "http://127.0.0.1:"+DefaultPort), "/"),
+		PublicAPIBaseURL:      strings.TrimRight(stringEnv("PUBLIC_API_BASE_URL", ""), "/"),
 		CORSOrigin:            stringEnv("CORS_ORIGIN", "*"),
 		AdminToken:            stringEnv("ADMIN_TOKEN", ""),
 		LicenseKeyPepper:      stringEnv("LICENSE_KEY_PEPPER", ""),
