@@ -14,6 +14,7 @@ const (
 	DefaultUpstreamTimeout       = 10 * time.Minute
 	DefaultTaskPollInterval      = 2 * time.Second
 	DefaultTaskWorkerConcurrency = 2
+	DefaultAutoMigrate           = true
 )
 
 type Config struct {
@@ -68,7 +69,7 @@ func Load(version string) (Config, error) {
 		LicenseKeyPepper:      stringEnv("LICENSE_KEY_PEPPER", ""),
 		ProviderSecret:        stringEnv("PROVIDER_CREDENTIAL_SECRET", ""),
 		DatabaseURL:           stringEnv("DATABASE_URL", ""),
-		AutoMigrate:           boolEnv("AUTO_MIGRATE", false),
+		AutoMigrate:           boolEnv("AUTO_MIGRATE", DefaultAutoMigrate),
 		MigrationsDir:         stringEnv("MIGRATIONS_DIR", "migrations"),
 		UpstreamTimeout:       durationSecondsEnv("UPSTREAM_TIMEOUT_SECONDS", DefaultUpstreamTimeout),
 		TaskPollInterval:      durationSecondsEnv("TASK_POLL_INTERVAL_SECONDS", DefaultTaskPollInterval),

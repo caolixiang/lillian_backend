@@ -23,6 +23,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.UpstreamTimeout != 10*time.Minute {
 		t.Fatalf("UpstreamTimeout = %s", cfg.UpstreamTimeout)
 	}
+	if !cfg.AutoMigrate {
+		t.Fatalf("AutoMigrate should default to true")
+	}
 }
 
 func TestLoadRuntimeValues(t *testing.T) {

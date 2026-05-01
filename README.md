@@ -14,20 +14,27 @@ This first backend scaffold includes:
 - Initial Postgres schema for licenses, activations, tasks, credit ledger, and service profiles
 - Dockerfile, Docker Compose, and GitHub Actions build flow
 
-The next phase is porting the existing Worker API behavior into Go:
+Implemented admin/runtime endpoints:
 
+- `GET /admin`
 - `POST /admin/licenses`
+- `GET /admin/licenses`
+- `PATCH /admin/licenses/:id`
+- `POST /admin/licenses/delete`
+- `GET /admin/service-profiles`
+- `POST /admin/service-profiles`
+- `DELETE /admin/service-profiles/:id`
 - `POST /api/keys/activate`
+- `GET /api/me/credits`
 - `POST /api/tasks`
 - `GET /api/tasks/:id`
 - `GET /api/tasks/:id/images/:index`
-- background task worker and provider fallback policy
 
 ## Environment
 
 - `PORT` - listen port, default `8787`
 - `DATABASE_URL` - Postgres DSN
-- `AUTO_MIGRATE` - run bundled SQL migrations on startup; useful for Docker/Railway first deploys
+- `AUTO_MIGRATE` - run bundled SQL migrations on startup, default `true`
 - `MIGRATIONS_DIR` - migrations directory, default `migrations`
 - `ADMIN_TOKEN` - admin bearer token
 - `LICENSE_KEY_PEPPER` - stable secret used for license key hashing
@@ -79,3 +86,5 @@ S3_FORCE_PATH_STYLE=true
 ## Railway
 
 Railway can build the `Dockerfile` directly. Add Postgres as a Railway service, set `DATABASE_URL`, and configure the S3 variables for R2 or another provider.
+
+Use [.env.production.example](.env.production.example) as the minimal Railway variable template. See [docs/deployment.md](docs/deployment.md) for Railway, VPS Docker Compose, R2/S3, and Cloudflare SPA wiring.
