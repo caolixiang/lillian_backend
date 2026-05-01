@@ -37,8 +37,6 @@ Implemented admin/runtime endpoints:
 
 - `PORT` - listen port, default `8787`
 - `DATABASE_URL` - Postgres DSN
-- `AUTO_MIGRATE` - run bundled SQL migrations on startup, default `true`
-- `MIGRATIONS_DIR` - migrations directory, default `migrations`
 - `ADMIN_TOKEN` - admin bearer token
 - `LICENSE_KEY_PEPPER` - stable secret used for license key hashing
 - `PROVIDER_CREDENTIAL_SECRET` - stable secret used to encrypt provider credentials
@@ -53,6 +51,8 @@ Optional deployment overrides:
 
 - `CORS_ORIGIN` - browser origin allowlist; defaults to `*`.
 - `PUBLIC_API_BASE_URL` - public backend URL override; defaults to the current request's forwarded host/protocol.
+
+SQL migrations are bundled in the Docker image and run automatically on startup. There is no normal Railway/VPS env value to configure for migrations.
 
 Runtime image settings are stored in Postgres and edited from `/admin`, not in `.env`:
 

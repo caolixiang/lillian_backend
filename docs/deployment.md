@@ -36,8 +36,6 @@ APP_ENV=production
 PORT=8787
 
 DATABASE_URL=${{Postgres.DATABASE_URL}}
-AUTO_MIGRATE=true
-MIGRATIONS_DIR=migrations
 
 ADMIN_TOKEN=replace-with-long-random-admin-password
 LICENSE_KEY_PEPPER=replace-with-long-random-stable-secret
@@ -54,8 +52,6 @@ S3_FORCE_PATH_STYLE=true
 
 These values have safe defaults in code but stay in the env templates so all three env files use the same shape:
 
-- `AUTO_MIGRATE=true`
-- `MIGRATIONS_DIR=migrations`
 - `S3_REGION=auto`
 - `S3_FORCE_PATH_STYLE=true`
 
@@ -83,7 +79,7 @@ Notes:
 
 - You do not need to know the Railway/custom domain before the first deploy. `/config.json` and task image URLs derive their base URL from the incoming request when `PUBLIC_API_BASE_URL` is unset.
 - CORS defaults to `*`, which fits this app because browser auth is sent through explicit bearer tokens rather than cookies. Restrict `CORS_ORIGIN` later only if you want a tighter browser origin policy.
-- The backend runs migrations on startup by default. Set `AUTO_MIGRATE=false` only after you have a separate migration process.
+- The backend runs bundled SQL migrations automatically on startup. No Railway/VPS env value is needed for migration paths.
 
 ## VPS With Docker Compose
 
