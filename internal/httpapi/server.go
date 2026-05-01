@@ -36,6 +36,9 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/config.json", s.handleConfig)
 	r.Post("/api/keys/activate", s.handleActivateLicense)
 	r.Get("/api/me/credits", s.handleCredits)
+	r.Post("/api/tasks", s.handleCreateTask)
+	r.Get("/api/tasks/{id}", s.handleGetTask)
+	r.Get("/api/tasks/{id}/images/{index}", s.handleGetTaskImage)
 	r.Post("/admin/licenses", s.handleAdminCreateLicenses)
 	r.Get("/admin/licenses", s.handleAdminListLicenses)
 	r.Post("/admin/licenses/delete", s.handleAdminDeleteLicenses)
@@ -104,7 +107,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

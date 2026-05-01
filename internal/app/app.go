@@ -17,6 +17,7 @@ type App struct {
 	cfg        config.Config
 	logger     *log.Logger
 	db         *pgxpool.Pool
+	api        *httpapi.Server
 	httpServer *http.Server
 }
 
@@ -47,6 +48,7 @@ func New(ctx context.Context, cfg config.Config, logger *log.Logger) (*App, erro
 		cfg:    cfg,
 		logger: logger,
 		db:     pool,
+		api:    api,
 		httpServer: &http.Server{
 			Addr:              cfg.ListenAddr,
 			Handler:           api.Handler(),
@@ -58,6 +60,9 @@ func New(ctx context.Context, cfg config.Config, logger *log.Logger) (*App, erro
 
 func (a *App) Run(ctx context.Context) error {
 	errs := make(chan error, 1)
+	if a.api != nil {
+		a.api.StartTaskWorkers(ctx)
+	}
 	go func() {
 		a.logger.Printf("listening on %s", a.cfg.ListenAddr)
 		errs <- a.httpServer.ListenAndServe()
