@@ -51,6 +51,10 @@ func TestTaskWalletAccountingMigrationAddsTaskWalletFields(t *testing.T) {
 		"ADD COLUMN IF NOT EXISTS credit_reserved BOOLEAN NOT NULL DEFAULT false",
 		"ADD COLUMN IF NOT EXISTS credit_charged BOOLEAN NOT NULL DEFAULT false",
 		"idx_tasks_wallet_service_status",
+		"idx_tasks_status_created_queued",
+		"idx_tasks_running_global",
+		"idx_tasks_service_profile_running",
+		"idx_tasks_wallet_recent",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("migration missing %q", want)

@@ -83,13 +83,17 @@ func (s *Server) StartTaskWorkers(ctx context.Context) {
 		return
 	}
 	s.recoverStaleWalletRunningTasks(ctx)
-	concurrency := s.cfg.TaskWorkerConcurrency
-	if concurrency < taskWorkerSlots {
-		concurrency = taskWorkerSlots
-	}
+	concurrency := s.taskWorkerConcurrency()
 	for i := 0; i < concurrency; i++ {
 		go s.taskWorkerLoop(ctx)
 	}
+}
+
+func (s *Server) taskWorkerConcurrency() int {
+	if s == nil || s.cfg.TaskWorkerConcurrency <= 0 {
+		return taskWorkerSlots
+	}
+	return s.cfg.TaskWorkerConcurrency
 }
 
 func (s *Server) taskWorkerLoop(ctx context.Context) {
@@ -506,8 +510,8 @@ func (s *Server) taskForLicense(w http.ResponseWriter, r *http.Request, taskID, 
 func (s *Server) taskForWallet(w http.ResponseWriter, r *http.Request, taskID, walletID string) (taskRow, bool) {
 	ctx, cancel := contextWithTimeout(r, 5*time.Second)
 	defer cancel()
-	task, err := s.taskByID(ctx, taskID)
-	if errorsIsNoRows(err) || task.WalletID != walletID {
+	task, err := s.taskByIDForWallet(ctx, taskID, walletID)
+	if errorsIsNoRows(err) {
 		errorJSON(w, http.StatusNotFound, "任务不存在")
 		return taskRow{}, false
 	}
@@ -1007,6 +1011,23 @@ func (s *Server) taskByID(ctx context.Context, taskID string) (taskRow, error) {
 		FROM tasks
 		WHERE id = $1
 	`, taskID))
+}
+
+func (s *Server) taskByIDForWallet(ctx context.Context, taskID, walletID string) (taskRow, error) {
+	query, args := walletTaskByIDQuery(taskID, walletID)
+	return scanTaskRow(s.db.QueryRow(ctx, query, args...))
+}
+
+func walletTaskByIDQuery(taskID, walletID string) (string, []any) {
+	return `
+		SELECT id, COALESCE(license_key_id, ''), COALESCE(activation_id, ''),
+			COALESCE(wallet_id, ''), COALESCE(service_code, ''),
+			credit_reserved, credit_charged, status, tier, requested_size,
+			service_profile, request_json, outputs_json, actual_params_json,
+			revised_prompts_json, error, created_at, updated_at, finished_at
+		FROM tasks
+		WHERE id = $1 AND wallet_id = $2
+	`, []any{taskID, walletID}
 }
 
 func scanTaskRow(row scanner) (taskRow, error) {

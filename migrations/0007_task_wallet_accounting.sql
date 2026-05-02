@@ -9,3 +9,19 @@ ALTER TABLE tasks
 CREATE INDEX IF NOT EXISTS idx_tasks_wallet_service_status
   ON tasks (wallet_id, service_code, status)
   WHERE wallet_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status_created_queued
+  ON tasks (status, created_at)
+  WHERE status = 'queued';
+
+CREATE INDEX IF NOT EXISTS idx_tasks_running_global
+  ON tasks (status)
+  WHERE status = 'running';
+
+CREATE INDEX IF NOT EXISTS idx_tasks_service_profile_running
+  ON tasks (service_profile, status)
+  WHERE status = 'running';
+
+CREATE INDEX IF NOT EXISTS idx_tasks_wallet_recent
+  ON tasks (wallet_id, created_at DESC)
+  WHERE wallet_id IS NOT NULL;

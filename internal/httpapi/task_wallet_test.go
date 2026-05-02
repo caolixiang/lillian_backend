@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CookSleep/lillian_backend/internal/config"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -121,6 +122,28 @@ func TestRecoverStaleWalletRunningTasksRefundsReservedCredit(t *testing.T) {
 	}
 	if !tx.markedError {
 		t.Fatalf("task was not marked error")
+	}
+}
+
+func TestWalletTaskLookupFiltersByWalletIDInQuery(t *testing.T) {
+	query, args := walletTaskByIDQuery("task-1", "wallet-1")
+	if !strings.Contains(query, "WHERE id = $1 AND wallet_id = $2") {
+		t.Fatalf("query does not filter by task and wallet id: %s", query)
+	}
+	if len(args) != 2 || args[0] != "task-1" || args[1] != "wallet-1" {
+		t.Fatalf("args = %#v", args)
+	}
+}
+
+func TestTaskWorkerConcurrencyRespectsConfig(t *testing.T) {
+	server := New(config.Config{TaskWorkerConcurrency: 2}, nil, nil, nil)
+	if got := server.taskWorkerConcurrency(); got != 2 {
+		t.Fatalf("taskWorkerConcurrency = %d", got)
+	}
+
+	server.cfg.TaskWorkerConcurrency = 0
+	if got := server.taskWorkerConcurrency(); got != taskWorkerSlots {
+		t.Fatalf("fallback taskWorkerConcurrency = %d", got)
 	}
 }
 
