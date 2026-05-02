@@ -541,7 +541,6 @@ function availabilityStatus(license: LicenseRecord): string {
   let label = '可用'
   if (license.status && license.status !== 'active') label = '不可用'
   else if (isExpired(license.expires_at)) label = '已过期'
-  else if (license.redeemed_at || license.redeemedWalletAddress || license.redeemedWalletId) label = '已兑换'
   const available = label === '可用'
   return `<span class="icon-status ${available ? 'ok' : 'bad'}" title="${h(label)}" aria-label="${h(label)}">${available ? '✓' : '×'}</span>`
 }
