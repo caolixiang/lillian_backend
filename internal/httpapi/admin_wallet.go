@@ -110,9 +110,6 @@ func (s postgresWalletStore) adminWalletRedemptions(ctx context.Context, walletI
 		); err != nil {
 			return nil, err
 		}
-		if redemption.ServiceCode == "" {
-			redemption.ServiceCode = serviceCodeFromTier("")
-		}
 		redemptions = append(redemptions, redemption)
 	}
 	if err := rows.Err(); err != nil {

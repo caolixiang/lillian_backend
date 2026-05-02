@@ -29,21 +29,10 @@ const (
 	imageModel                  = "gpt-image-2"
 )
 
-type activationContext struct {
-	ActivationID     string
-	LicenseKeyID     string
-	Tier             string
-	RemainingCredits int
-	MaxConcurrent    int
-}
-
 type licenseRow struct {
 	ID               string
 	KeyCiphertext    sql.NullString
-	Tier             string
 	ServiceCode      string
-	TotalCredits     int
-	RemainingCredits int
 	Credits          int
 	MaxConcurrent    int
 	Status           string
@@ -78,102 +67,6 @@ type serviceProfileRow struct {
 	UpdatedAt        time.Time
 }
 
-func (s *Server) handleActivateLicense(w http.ResponseWriter, r *http.Request) {
-	if !s.requireDatabase(w) {
-		return
-	}
-
-	var body struct {
-		Key   string `json:"key"`
-		Label string `json:"label"`
-	}
-	if !readJSON(w, r, &body) {
-		return
-	}
-	key := strings.TrimSpace(body.Key)
-	if key == "" {
-		errorJSON(w, http.StatusBadRequest, "请输入兑换密匙")
-		return
-	}
-
-	ctx, cancel := contextWithTimeout(r, 5*time.Second)
-	defer cancel()
-
-	keyHash := s.hashSecret(key)
-	license, err := s.licenseByHash(ctx, keyHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		errorJSON(w, http.StatusNotFound, "兑换密匙无效或已失效")
-		return
-	}
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if license.RemainingCredits <= 0 {
-		errorJSON(w, http.StatusForbidden, "兑换密匙次数已用完")
-		return
-	}
-
-	token, err := randomToken("act", 32)
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	activationID, err := randomUUID()
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	now := time.Now().UTC()
-	_, err = s.db.Exec(ctx, `
-		INSERT INTO activations (id, license_key_id, token_hash, label, created_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, activationID, license.ID, s.hashSecret(token), strings.TrimSpace(body.Label), now, now)
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"token":            token,
-		"activationId":     activationID,
-		"licenseKeyId":     license.ID,
-		"tier":             license.Tier,
-		"remainingCredits": license.RemainingCredits,
-		"maxConcurrent":    license.MaxConcurrent,
-		"expiresAt":        nullableTime(license.ExpiresAt),
-	})
-}
-
-func (s *Server) handleCredits(w http.ResponseWriter, r *http.Request) {
-	auth, ok := s.verifyActivation(w, r)
-	if !ok {
-		return
-	}
-
-	ctx, cancel := contextWithTimeout(r, 5*time.Second)
-	defer cancel()
-
-	var activeTasks int
-	err := s.db.QueryRow(ctx, `
-		SELECT COUNT(*)
-		FROM tasks
-		WHERE license_key_id = $1 AND status IN ('queued', 'running')
-	`, auth.LicenseKeyID).Scan(&activeTasks)
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"licenseKeyId":     auth.LicenseKeyID,
-		"tier":             auth.Tier,
-		"remainingCredits": auth.RemainingCredits,
-		"maxConcurrent":    auth.MaxConcurrent,
-		"activeTasks":      activeTasks,
-	})
-}
-
 func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requireDatabase(w) {
 		return
@@ -181,8 +74,7 @@ func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Reques
 
 	var body struct {
 		Count         int    `json:"count"`
-		Tier          string `json:"tier"`
-		TotalCredits  int    `json:"totalCredits"`
+		Credits       int    `json:"credits"`
 		MaxConcurrent int    `json:"maxConcurrent"`
 		ExpiresAt     string `json:"expiresAt"`
 		ExpiresInDays int    `json:"expiresInDays"`
@@ -194,12 +86,8 @@ func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Reques
 	}
 
 	count := minPositive(body.Count, 1, 100)
-	tier := strings.TrimSpace(body.Tier)
-	if tier == "" {
-		tier = "basic"
-	}
-	serviceCode := normalizeServiceCode(firstNonEmpty(body.ServiceCode, serviceCodeFromTier(tier)))
-	totalCredits := positiveOr(body.TotalCredits, defaultLicenseCredits)
+	serviceCode := normalizeServiceCode(body.ServiceCode)
+	credits := positiveOr(body.Credits, defaultLicenseCredits)
 	maxConcurrent := positiveOr(body.MaxConcurrent, defaultMaxConcurrent)
 	expiresAt, err := parseExpiresAt(body.ExpiresAt, body.ExpiresInDays)
 	if err != nil {
@@ -231,10 +119,10 @@ func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Reques
 		}
 		_, err = s.db.Exec(ctx, `
 			INSERT INTO license_keys (
-				id, key_hash, key_ciphertext, tier, total_credits, remaining_credits,
-				service_code, credits, max_concurrent, status, expires_at, note, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $11, $12, $13)
-		`, id, s.hashSecret(key), keyCiphertext, tier, totalCredits, totalCredits, serviceCode, totalCredits, maxConcurrent, expiresAt, note, now, now)
+				id, key_hash, key_ciphertext, service_code, credits, max_concurrent,
+				status, expires_at, note, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10)
+		`, id, s.hashSecret(key), keyCiphertext, serviceCode, credits, maxConcurrent, expiresAt, note, now, now)
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, err.Error())
 			return
@@ -242,10 +130,8 @@ func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Reques
 		keys = append(keys, map[string]any{
 			"id":            id,
 			"key":           key,
-			"tier":          tier,
 			"serviceCode":   serviceCode,
-			"totalCredits":  totalCredits,
-			"credits":       totalCredits,
+			"credits":       credits,
 			"maxConcurrent": maxConcurrent,
 			"note":          note,
 		})
@@ -273,8 +159,8 @@ func (s *Server) handleAdminListLicenses(w http.ResponseWriter, r *http.Request)
 	var err error
 	if search != "" {
 		rows, err = s.db.Query(ctx, `
-			SELECT l.id, l.key_ciphertext, l.tier, l.service_code, l.total_credits, l.remaining_credits,
-				l.credits, l.max_concurrent, l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
+			SELECT l.id, l.key_ciphertext, l.service_code, l.credits, l.max_concurrent,
+				l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
 				w.address, l.note, l.created_at, l.updated_at
 			FROM license_keys l
 			LEFT JOIN wallets w ON w.id = l.redeemed_wallet_id
@@ -284,8 +170,8 @@ func (s *Server) handleAdminListLicenses(w http.ResponseWriter, r *http.Request)
 		`, s.hashSecret(search), queryLimit, offset)
 	} else {
 		rows, err = s.db.Query(ctx, `
-			SELECT l.id, l.key_ciphertext, l.tier, l.service_code, l.total_credits, l.remaining_credits,
-				l.credits, l.max_concurrent, l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
+			SELECT l.id, l.key_ciphertext, l.service_code, l.credits, l.max_concurrent,
+				l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
 				w.address, l.note, l.created_at, l.updated_at
 			FROM license_keys l
 			LEFT JOIN wallets w ON w.id = l.redeemed_wallet_id
@@ -620,51 +506,6 @@ func (s *Server) handleAdminDeleteServiceProfile(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 
-func (s *Server) verifyActivation(w http.ResponseWriter, r *http.Request) (activationContext, bool) {
-	if !s.requireDatabase(w) {
-		return activationContext{}, false
-	}
-	token := bearerToken(r)
-	if token == "" {
-		errorJSON(w, http.StatusUnauthorized, "缺少激活凭证")
-		return activationContext{}, false
-	}
-
-	ctx, cancel := contextWithTimeout(r, 5*time.Second)
-	defer cancel()
-	now := time.Now().UTC()
-	var auth activationContext
-	err := s.db.QueryRow(ctx, `
-		SELECT a.id, a.license_key_id, l.tier, l.remaining_credits, l.max_concurrent
-		FROM activations a
-		JOIN license_keys l ON l.id = a.license_key_id
-		WHERE a.token_hash = $1
-			AND a.revoked_at IS NULL
-			AND (a.expires_at IS NULL OR a.expires_at > $2)
-			AND l.status = 'active'
-			AND (l.expires_at IS NULL OR l.expires_at > $3)
-	`, s.hashSecret(token), now, now).Scan(
-		&auth.ActivationID,
-		&auth.LicenseKeyID,
-		&auth.Tier,
-		&auth.RemainingCredits,
-		&auth.MaxConcurrent,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		errorJSON(w, http.StatusUnauthorized, "激活凭证无效或已过期")
-		return activationContext{}, false
-	}
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return activationContext{}, false
-	}
-	if auth.MaxConcurrent <= 0 {
-		auth.MaxConcurrent = defaultMaxConcurrent
-	}
-	_, _ = s.db.Exec(ctx, `UPDATE activations SET last_seen_at = $1 WHERE id = $2`, time.Now().UTC(), auth.ActivationID)
-	return auth, true
-}
-
 func (s *Server) requireDatabase(w http.ResponseWriter) bool {
 	if s.db == nil {
 		errorJSON(w, http.StatusServiceUnavailable, "database is not configured")
@@ -685,37 +526,6 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
-}
-
-func (s *Server) licenseByHash(ctx context.Context, keyHash string) (licenseRow, error) {
-	var license licenseRow
-	err := s.db.QueryRow(ctx, `
-		SELECT id, key_ciphertext, tier, service_code, total_credits, remaining_credits,
-			credits, max_concurrent, status, expires_at, redeemed_at, redeemed_wallet_id,
-			NULL::text AS redeemed_wallet_address, note, created_at, updated_at
-		FROM license_keys
-		WHERE key_hash = $1
-			AND status = 'active'
-			AND (expires_at IS NULL OR expires_at > $2)
-	`, keyHash, time.Now().UTC()).Scan(
-		&license.ID,
-		&license.KeyCiphertext,
-		&license.Tier,
-		&license.ServiceCode,
-		&license.TotalCredits,
-		&license.RemainingCredits,
-		&license.Credits,
-		&license.MaxConcurrent,
-		&license.Status,
-		&license.ExpiresAt,
-		&license.RedeemedAt,
-		&license.RedeemedWalletID,
-		&license.RedeemedAddress,
-		&license.Note,
-		&license.CreatedAt,
-		&license.UpdatedAt,
-	)
-	return license, err
 }
 
 func (s *Server) serviceProfileByID(ctx context.Context, id string) (*serviceProfileRow, error) {
@@ -742,10 +552,7 @@ func scanLicense(row scanner) (licenseRow, error) {
 	err := row.Scan(
 		&license.ID,
 		&license.KeyCiphertext,
-		&license.Tier,
 		&license.ServiceCode,
-		&license.TotalCredits,
-		&license.RemainingCredits,
 		&license.Credits,
 		&license.MaxConcurrent,
 		&license.Status,
@@ -796,11 +603,8 @@ func (s *Server) publicLicense(license licenseRow) map[string]any {
 	return map[string]any{
 		"id":                    license.ID,
 		"key":                   key,
-		"tier":                  license.Tier,
-		"serviceCode":           normalizeServiceCode(firstNonEmpty(license.ServiceCode, serviceCodeFromTier(license.Tier))),
-		"total_credits":         license.TotalCredits,
-		"remaining_credits":     license.RemainingCredits,
-		"credits":               positiveOr(license.Credits, license.TotalCredits),
+		"serviceCode":           normalizeServiceCode(license.ServiceCode),
+		"credits":               license.Credits,
 		"max_concurrent":        license.MaxConcurrent,
 		"status":                license.Status,
 		"expires_at":            nullableTime(license.ExpiresAt),

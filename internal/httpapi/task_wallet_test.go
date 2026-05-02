@@ -44,16 +44,16 @@ func TestSelectWalletServiceForGenerationRequiresHDFor2KAnd4K(t *testing.T) {
 		t.Fatalf("expected 2K without HD to fail")
 	}
 
-	for _, tier := range []string{"2K", "4K"} {
+	for _, sizeTier := range []string{"2K", "4K"} {
 		service, err := selectWalletServiceForGeneration([]walletEntitlement{
 			{ServiceCode: serviceCodeImage2SD, Remaining: 3, MaxConcurrent: 6},
 			{ServiceCode: serviceCodeImage2HD, Remaining: 1, MaxConcurrent: 6},
-		}, tier)
+		}, sizeTier)
 		if err != nil {
-			t.Fatalf("select %s service: %v", tier, err)
+			t.Fatalf("select %s service: %v", sizeTier, err)
 		}
 		if service.ServiceCode != serviceCodeImage2HD {
-			t.Fatalf("%s service = %q", tier, service.ServiceCode)
+			t.Fatalf("%s service = %q", sizeTier, service.ServiceCode)
 		}
 	}
 }

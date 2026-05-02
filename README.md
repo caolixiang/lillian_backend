@@ -2,7 +2,7 @@
 
 Standalone Go backend for Lillian's Canvas.
 
-The Cloudflare side should only serve the SPA and `/config.json`. This backend owns licenses, activations, image tasks, provider routing, and S3-compatible image storage.
+The Cloudflare side should only serve the SPA and `/config.json`. This backend owns wallets, exchange codes, image tasks, provider routing, and S3-compatible image storage.
 
 ## Current Scope
 
@@ -12,7 +12,7 @@ This first backend scaffold includes:
 - Vite-built admin frontend embedded into the Go binary at `/admin`
 - Postgres connection plumbing
 - S3-compatible object storage client for R2, AWS S3, MinIO, Wasabi, Backblaze, and similar providers
-- Postgres schema for wallet entitlements, licenses, activations, tasks, credit ledger, and service profiles
+- Postgres schema for wallets, wallet entitlements, exchange codes, tasks, redemption history, and service profiles
 - Lightweight Dockerfile, backend-only Docker Compose, and GitHub Actions build flow
 
 Implemented admin/runtime endpoints:
@@ -32,8 +32,6 @@ Implemented admin/runtime endpoints:
 - `POST /api/wallets/restore`
 - `GET /api/wallets/:address`
 - `POST /api/wallets/redeem`
-- `POST /api/keys/activate`
-- `GET /api/me/credits`
 - `POST /api/tasks`
 - `GET /api/tasks/:id`
 - `GET /api/tasks/:id/images/:index`

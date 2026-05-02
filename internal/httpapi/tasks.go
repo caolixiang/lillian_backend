@@ -42,14 +42,11 @@ type taskPayload struct {
 
 type taskRow struct {
 	ID                 string
-	LicenseKeyID       string
-	ActivationID       string
 	WalletID           string
 	ServiceCode        string
 	CreditReserved     bool
 	CreditCharged      bool
 	Status             string
-	Tier               string
 	RequestedSize      string
 	ServiceProfile     string
 	RequestJSON        []byte
@@ -389,10 +386,10 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO tasks (
-			id, license_key_id, activation_id, wallet_id, service_code, credit_reserved, credit_charged,
-			status, tier, requested_size, service_profile, request_json, created_at, updated_at
-		) VALUES ($1, NULL, NULL, $2, $3, true, false, 'queued', $4, $5, $6, $7, $8, $9)
-	`, taskID, wallet.Wallet.ID, entitlement.ServiceCode, tierForServiceCode(entitlement.ServiceCode), requestedSize, profile.ID, requestJSON, now, now)
+			id, wallet_id, service_code, credit_reserved, credit_charged,
+			status, requested_size, service_profile, request_json, created_at, updated_at
+		) VALUES ($1, $2, $3, true, false, 'queued', $4, $5, $6, $7, $8)
+	`, taskID, wallet.Wallet.ID, entitlement.ServiceCode, requestedSize, profile.ID, requestJSON, now, now)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -492,21 +489,6 @@ func (s *Server) walletFromRequest(w http.ResponseWriter, r *http.Request) (wall
 	return snapshot, true
 }
 
-func (s *Server) taskForLicense(w http.ResponseWriter, r *http.Request, taskID, licenseKeyID string) (taskRow, bool) {
-	ctx, cancel := contextWithTimeout(r, 5*time.Second)
-	defer cancel()
-	task, err := s.taskByID(ctx, taskID)
-	if errorsIsNoRows(err) || task.LicenseKeyID != licenseKeyID {
-		errorJSON(w, http.StatusNotFound, "任务不存在")
-		return taskRow{}, false
-	}
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return taskRow{}, false
-	}
-	return task, true
-}
-
 func (s *Server) taskForWallet(w http.ResponseWriter, r *http.Request, taskID, walletID string) (taskRow, bool) {
 	ctx, cancel := contextWithTimeout(r, 5*time.Second)
 	defer cancel()
@@ -537,9 +519,8 @@ func (s *Server) claimNextQueuedTask(ctx context.Context, settings runtimeSettin
 	}
 
 	task, err := scanTaskRow(tx.QueryRow(ctx, `
-		SELECT t.id, COALESCE(t.license_key_id, ''), COALESCE(t.activation_id, ''),
-			COALESCE(t.wallet_id, ''), COALESCE(t.service_code, ''),
-			t.credit_reserved, t.credit_charged, t.status, t.tier, t.requested_size,
+		SELECT t.id, COALESCE(t.wallet_id, ''), COALESCE(t.service_code, ''),
+			t.credit_reserved, t.credit_charged, t.status, t.requested_size,
 			t.service_profile, t.request_json, t.outputs_json, t.actual_params_json,
 			t.revised_prompts_json, t.error, t.created_at, t.updated_at, t.finished_at
 		FROM tasks t
@@ -585,9 +566,8 @@ func (s *Server) claimQueuedTaskByID(ctx context.Context, taskID string, setting
 	}
 
 	task, err := scanTaskRow(tx.QueryRow(ctx, `
-		SELECT t.id, COALESCE(t.license_key_id, ''), COALESCE(t.activation_id, ''),
-			COALESCE(t.wallet_id, ''), COALESCE(t.service_code, ''),
-			t.credit_reserved, t.credit_charged, t.status, t.tier, t.requested_size,
+		SELECT t.id, COALESCE(t.wallet_id, ''), COALESCE(t.service_code, ''),
+			t.credit_reserved, t.credit_charged, t.status, t.requested_size,
 			t.service_profile, t.request_json, t.outputs_json, t.actual_params_json,
 			t.revised_prompts_json, t.error, t.created_at, t.updated_at, t.finished_at
 		FROM tasks t
@@ -688,13 +668,7 @@ func (s *Server) executeTask(ctx context.Context, task taskRow) error {
 		if attempt >= serviceProfileFallbackRetries {
 			break
 		}
-		var next serviceProfileRow
-		var selectErr error
-		if task.ServiceCode != "" {
-			next, selectErr = s.selectServiceProfileForWallet(ctx, task.ServiceCode, task.RequestedSize, stringParam(payload.Params, "size_tier"), tried)
-		} else {
-			next, selectErr = s.selectServiceProfile(ctx, task.Tier, task.RequestedSize, stringParam(payload.Params, "size_tier"), tried)
-		}
+		next, selectErr := s.selectServiceProfileForWallet(ctx, task.ServiceCode, task.RequestedSize, stringParam(payload.Params, "size_tier"), tried)
 		if selectErr != nil {
 			break
 		}
@@ -737,13 +711,6 @@ func (s *Server) executeTask(ctx context.Context, task taskRow) error {
 	`, string(outputsJSON), string(actualParamsJSON), string(revisedPromptsJSON), finishedAt, finishedAt, task.ID)
 	if err != nil {
 		return err
-	}
-	ledgerID, _ := randomUUID()
-	if task.LicenseKeyID != "" {
-		_, _ = s.db.Exec(ctx, `
-			INSERT INTO credit_ledger (id, license_key_id, task_id, type, amount, created_at, note)
-			VALUES ($1, $2, $3, 'consume', 0, $4, 'task completed')
-		`, ledgerID, task.LicenseKeyID, task.ID, finishedAt)
 	}
 	return nil
 }
@@ -1001,18 +968,6 @@ func requestWalletAddress(r *http.Request) string {
 	return address
 }
 
-func (s *Server) taskByID(ctx context.Context, taskID string) (taskRow, error) {
-	return scanTaskRow(s.db.QueryRow(ctx, `
-		SELECT id, COALESCE(license_key_id, ''), COALESCE(activation_id, ''),
-			COALESCE(wallet_id, ''), COALESCE(service_code, ''),
-			credit_reserved, credit_charged, status, tier, requested_size,
-			service_profile, request_json, outputs_json, actual_params_json,
-			revised_prompts_json, error, created_at, updated_at, finished_at
-		FROM tasks
-		WHERE id = $1
-	`, taskID))
-}
-
 func (s *Server) taskByIDForWallet(ctx context.Context, taskID, walletID string) (taskRow, error) {
 	query, args := walletTaskByIDQuery(taskID, walletID)
 	return scanTaskRow(s.db.QueryRow(ctx, query, args...))
@@ -1020,9 +975,8 @@ func (s *Server) taskByIDForWallet(ctx context.Context, taskID, walletID string)
 
 func walletTaskByIDQuery(taskID, walletID string) (string, []any) {
 	return `
-		SELECT id, COALESCE(license_key_id, ''), COALESCE(activation_id, ''),
-			COALESCE(wallet_id, ''), COALESCE(service_code, ''),
-			credit_reserved, credit_charged, status, tier, requested_size,
+		SELECT id, COALESCE(wallet_id, ''), COALESCE(service_code, ''),
+			credit_reserved, credit_charged, status, requested_size,
 			service_profile, request_json, outputs_json, actual_params_json,
 			revised_prompts_json, error, created_at, updated_at, finished_at
 		FROM tasks
@@ -1034,14 +988,11 @@ func scanTaskRow(row scanner) (taskRow, error) {
 	var task taskRow
 	err := row.Scan(
 		&task.ID,
-		&task.LicenseKeyID,
-		&task.ActivationID,
 		&task.WalletID,
 		&task.ServiceCode,
 		&task.CreditReserved,
 		&task.CreditCharged,
 		&task.Status,
-		&task.Tier,
 		&task.RequestedSize,
 		&task.ServiceProfile,
 		&task.RequestJSON,
@@ -1054,14 +1005,6 @@ func scanTaskRow(row scanner) (taskRow, error) {
 		&task.FinishedAt,
 	)
 	return task, err
-}
-
-func (s *Server) selectServiceProfile(ctx context.Context, tier, size, sizeTier string, exclude []string) (serviceProfileRow, error) {
-	buckets, err := candidateBuckets(tier, sizeTier)
-	if err != nil {
-		return serviceProfileRow{}, err
-	}
-	return s.selectServiceProfileFromBuckets(ctx, buckets, exclude)
 }
 
 func (s *Server) selectServiceProfileForWallet(ctx context.Context, serviceCode, size, sizeTier string, exclude []string) (serviceProfileRow, error) {
@@ -1173,18 +1116,6 @@ func (s *Server) failTaskAndRefund(ctx context.Context, task taskRow, message st
 		`, now, task.ID)
 		return
 	}
-	if task.LicenseKeyID != "" {
-		_, _ = s.db.Exec(ctx, `
-			UPDATE license_keys
-			SET remaining_credits = remaining_credits + 1, updated_at = $1
-			WHERE id = $2
-		`, now, task.LicenseKeyID)
-		ledgerID, _ := randomUUID()
-		_, _ = s.db.Exec(ctx, `
-			INSERT INTO credit_ledger (id, license_key_id, task_id, type, amount, created_at, note)
-			VALUES ($1, $2, $3, 'refund', 1, $4, 'task failed before producing output')
-		`, ledgerID, task.LicenseKeyID, task.ID, now)
-	}
 }
 
 func endpointURL(profile serviceProfileRow, path string) string {
@@ -1205,20 +1136,6 @@ func normalizeTaskSize(params map[string]any) (string, string) {
 		}
 	}
 	return size, sizeTier
-}
-
-func candidateBuckets(tier, sizeTier string) ([]string, error) {
-	sizeTier = strings.ToUpper(strings.TrimSpace(sizeTier))
-	if sizeTier == "2K" || sizeTier == "4K" {
-		if tier != "hd" {
-			return nil, fmt.Errorf("当前密匙不支持 2K/4K 高清图片")
-		}
-		return []string{"hd"}, nil
-	}
-	if tier == "hd" {
-		return []string{"1k", "hd"}, nil
-	}
-	return []string{"1k"}, nil
 }
 
 func selectWalletServiceForGeneration(entitlements []walletEntitlement, sizeTier string) (walletEntitlement, error) {
@@ -1262,13 +1179,6 @@ func candidateBucketsForService(serviceCode, sizeTier string) ([]string, error) 
 		return []string{"1k", "hd"}, nil
 	}
 	return []string{"1k"}, nil
-}
-
-func tierForServiceCode(serviceCode string) string {
-	if serviceCode == serviceCodeImage2HD {
-		return "hd"
-	}
-	return "basic"
 }
 
 func replaceEntitlementRemaining(entitlements []walletEntitlement, serviceCode string, remaining int) []walletEntitlement {

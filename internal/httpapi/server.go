@@ -58,8 +58,6 @@ func (s *Server) Handler() http.Handler {
 	r.Head("/admin/lillian-icon.svg", s.handleIcon)
 	r.Get("/lillian-icon.svg", s.handleIcon)
 	r.Head("/lillian-icon.svg", s.handleIcon)
-	r.Post("/api/keys/activate", s.handleActivateLicense)
-	r.Get("/api/me/credits", s.handleCredits)
 	r.Post("/api/wallets/create", s.handleCreateWallet)
 	r.Post("/api/wallets/restore", s.handleRestoreWallet)
 	r.Post("/api/wallets/redeem", s.handleRedeemWallet)

@@ -286,9 +286,6 @@ func licenseByHashForWalletRedeem(ctx context.Context, tx pgxTx, codeHash string
 	if redeemedWalletID.Valid {
 		license.RedeemedWalletID = redeemedWalletID.String
 	}
-	if license.ServiceCode == "" {
-		license.ServiceCode = serviceCodeFromTier("")
-	}
 	return license, nil
 }
 
@@ -505,13 +502,6 @@ func serviceLabel(serviceCode string) string {
 	default:
 		return serviceCode
 	}
-}
-
-func serviceCodeFromTier(tier string) string {
-	if strings.EqualFold(strings.TrimSpace(tier), "hd") {
-		return serviceCodeImage2HD
-	}
-	return serviceCodeImage2SD
 }
 
 func base32NoPadding(bytes []byte) string {

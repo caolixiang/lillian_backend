@@ -60,7 +60,7 @@ These values are optional overrides and usually do not need to be set:
 - `CORS_ORIGIN`: defaults to `*`. Set it only when you want to restrict browser callers to a specific frontend origin.
 - `PUBLIC_API_BASE_URL`: defaults to the current request host/protocol. Set it only when a reverse proxy hides the real public backend URL and does not send standard forwarded headers.
 
-`LICENSE_KEY_PEPPER` and `PROVIDER_CREDENTIAL_SECRET` must remain stable. Changing either one breaks lookup/decryption for existing exchange codes, activations, or service provider credentials.
+`LICENSE_KEY_PEPPER` and `PROVIDER_CREDENTIAL_SECRET` must remain stable. Changing either one breaks lookup/decryption for existing exchange codes, wallet recovery hashes, or service provider credentials.
 
 ## Railway
 
@@ -133,7 +133,7 @@ Recommended first actions:
    - 默认服务商并发: per-provider concurrency when that provider's "最大并发" is `0`.
    - 上游超时秒数: timeout for one synchronous upstream generation and returned image retrieval.
 4. Create a short-lived test exchange code.
-5. Activate the test code in the SPA.
+5. Redeem the test code into a wallet in the SPA.
 6. Generate one 1K image and one HD image.
 
 ## Operational Notes
@@ -143,9 +143,9 @@ Recommended first actions:
 - `DB_POOL_MAX_CONNS` and `DB_POOL_MIN_CONNS` configure pgxpool. Start with `32` max and `4` min for the 8 vCPU / 8 GB VPS plus Railway Postgres deployment, then adjust only if connection wait or Railway connection limits say to.
 - Image runtime knobs live in Postgres and are edited from `/admin`, so changing concurrency or timeout does not require changing `.env`.
 - The backend starts a fixed worker pool internally, but a task can only be claimed when the database-backed global and provider concurrency limits allow it.
-- Per-license concurrency is enforced by active queued/running task count and the exchange code's `max_concurrent`.
+- Per-wallet service concurrency is enforced by active queued/running task count and the redeemed exchange code's `max_concurrent`.
 - Provider concurrency is enforced when queued tasks are claimed. A provider's "最大并发" of `0` means "use 默认服务商并发".
 - 1K generation prefers 1K providers. HD keys can fall back to HD providers for 1K only when no active 1K provider is selected by priority/fallback rules.
-- 2K/4K requires an HD license and an HD provider.
+- 2K/4K requires an HD wallet entitlement and an HD provider.
 - If upstream generation fails before output is stored, the backend marks the task `error` and refunds the reserved credit.
 - If upstream succeeds but the backend cannot download/store the output, the task is also marked `error` and credit is refunded. Provider-side billing may still happen; use reliable backend hosting and S3 storage.

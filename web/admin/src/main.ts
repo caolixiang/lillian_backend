@@ -6,11 +6,8 @@ type AdminView = 'main' | 'settings'
 interface LicenseRecord {
   id: string
   key?: string
-  tier: string
-  serviceCode?: string
-  total_credits: number
-  remaining_credits: number
-  credits?: number
+  serviceCode: string
+  credits: number
   max_concurrent: number
   status?: string
   expires_at?: string | null
@@ -86,10 +83,8 @@ interface CreateLicenseResponse {
   keys: Array<{
     id: string
     key: string
-    tier: string
-    serviceCode?: string
-    totalCredits: number
-    credits?: number
+    serviceCode: string
+    credits: number
     maxConcurrent: number
     note?: string
   }>
@@ -205,7 +200,7 @@ app.innerHTML = `
                 <label>数量<input name="count" type="number" min="1" max="100" value="1"></label>
               </div>
               <div class="columns">
-                <label>每个密匙次数<input name="totalCredits" type="number" min="1" value="5"></label>
+                <label>每个密匙次数<input name="credits" type="number" min="1" value="5"></label>
                 <label>最大并发<input name="maxConcurrent" type="number" min="1" value="6"></label>
               </div>
               <label>备注 / 发放对象<input name="note" placeholder="例如：Alice / 订单号 / 渠道"></label>
@@ -547,7 +542,6 @@ function availabilityStatus(license: LicenseRecord): string {
   if (license.status && license.status !== 'active') label = '不可用'
   else if (isExpired(license.expires_at)) label = '已过期'
   else if (license.redeemed_at || license.redeemedWalletAddress || license.redeemedWalletId) label = '已兑换'
-  else if (license.remaining_credits <= 0) label = '已用完'
   const available = label === '可用'
   return `<span class="icon-status ${available ? 'ok' : 'bad'}" title="${h(label)}" aria-label="${h(label)}">${available ? '✓' : '×'}</span>`
 }
@@ -558,7 +552,7 @@ function renderCreatedKeys(): void {
   els.createdKeys.innerHTML = state.createdKeys
     .map(
       (item) =>
-        `<div class="created-item"><div class="created-item-row"><code>${h(item.key)}</code><button class="small" type="button" data-copy-created="${h(item.key)}">复制</button></div><div class="hint">${h(serviceLabel(item.serviceCode || item.tier))} · ${h(item.credits || item.totalCredits)} 次${item.note ? ` · ${h(item.note)}` : ''}</div></div>`,
+        `<div class="created-item"><div class="created-item-row"><code>${h(item.key)}</code><button class="small" type="button" data-copy-created="${h(item.key)}">复制</button></div><div class="hint">${h(serviceLabel(item.serviceCode))} · ${h(item.credits)} 次${item.note ? ` · ${h(item.note)}` : ''}</div></div>`,
     )
     .join('')
 }
@@ -579,7 +573,7 @@ function renderLicenses(): void {
           key
             ? `<code>${h(key)}</code><button class="small" type="button" data-copy-license="${h(key)}">复制</button>`
             : '<span class="pill warn">旧数据不可查看</span>'
-        }</div></td><td>${h(serviceLabel(license.serviceCode || license.tier))}</td><td>${h(license.credits || license.total_credits)}</td><td>${h(license.max_concurrent)}</td><td>${availabilityStatus(license)}</td><td>${redeemedWallet ? `<code>${h(redeemedWallet)}</code>` : '<span class="pill">未兑换</span>'}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
+        }</div></td><td>${h(serviceLabel(license.serviceCode))}</td><td>${h(license.credits)}</td><td>${h(license.max_concurrent)}</td><td>${availabilityStatus(license)}</td><td>${redeemedWallet ? `<code>${h(redeemedWallet)}</code>` : '<span class="pill">未兑换</span>'}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
       })
       .join('') || '<tr><td colspan="9">暂无兑换码</td></tr>'
 
@@ -934,7 +928,7 @@ function bindEvents(): void {
       const payload = {
         serviceCode: formValue(els.licenseForm, 'serviceCode'),
         count: Number(formValue(els.licenseForm, 'count') || 1),
-        totalCredits: Number(formValue(els.licenseForm, 'totalCredits') || 5),
+        credits: Number(formValue(els.licenseForm, 'credits') || 5),
         maxConcurrent: Number(formValue(els.licenseForm, 'maxConcurrent') || 6),
         expiresInDays: Number(formValue(els.licenseForm, 'expiresInDays') || 30),
         note: formValue(els.licenseForm, 'note').trim(),
