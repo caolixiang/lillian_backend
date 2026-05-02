@@ -17,6 +17,7 @@ type Server struct {
 	cfg            config.Config
 	db             *pgxpool.Pool
 	wallets        walletStore
+	adminWallets   adminWalletStore
 	store          storage.ObjectStore
 	logger         *log.Logger
 	upstreamClient *http.Client
@@ -32,7 +33,9 @@ func New(cfg config.Config, db *pgxpool.Pool, store storage.ObjectStore, logger 
 		upstreamClient: newUpstreamHTTPClient(),
 	}
 	if db != nil {
-		server.wallets = postgresWalletStore{db: db}
+		wallets := postgresWalletStore{db: db}
+		server.wallets = wallets
+		server.adminWallets = wallets
 	}
 	return server
 }
@@ -70,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/admin/licenses/{id}", s.handleAdminUpdateLicense)
 	r.Patch("/admin/licenses/{id}", s.handleAdminUpdateLicense)
 	r.Delete("/admin/licenses/{id}", s.handleAdminDeleteLicenses)
+	r.Get("/admin/wallets/{address}", s.handleAdminGetWallet)
 	r.Get("/admin/service-profiles", s.handleAdminListServiceProfiles)
 	r.Post("/admin/service-profiles", s.handleAdminUpsertServiceProfile)
 	r.Delete("/admin/service-profiles/{id}", s.handleAdminDeleteServiceProfile)

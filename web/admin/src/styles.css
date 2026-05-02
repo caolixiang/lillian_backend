@@ -226,6 +226,11 @@ section {
   padding: 13px 14px;
 }
 
+.compact-head {
+  justify-content: flex-start;
+  padding: 10px 14px;
+}
+
 .body {
   padding: 14px;
 }
@@ -547,6 +552,59 @@ code {
   background: #fff;
 }
 
+.wallet-summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.8fr) repeat(3, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.metric-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfbfa;
+  padding: 9px 10px;
+}
+
+.metric-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.metric-row strong {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.metric-row code,
+.task-error {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wallet-table {
+  min-width: 720px;
+}
+
+.wallet-table .hint {
+  margin-top: 2px;
+}
+
+.task-error {
+  display: inline-block;
+  max-width: 240px;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .shell {
     padding: 16px;
@@ -582,6 +640,10 @@ code {
 
   .page-size {
     margin-left: 0;
+  }
+
+  .metric-row {
+    grid-template-columns: 1fr;
   }
 
   table {

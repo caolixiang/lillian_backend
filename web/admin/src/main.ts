@@ -40,6 +40,48 @@ interface RuntimeSettings {
   upstreamTimeoutSeconds: number
 }
 
+interface WalletEntitlement {
+  serviceCode: string
+  label?: string
+  remaining: number
+  maxConcurrent: number
+}
+
+interface AdminWalletRecord {
+  address: string
+  entitlements: WalletEntitlement[]
+}
+
+interface AdminWalletRedemption {
+  id: string
+  licenseKeyId: string
+  serviceCode: string
+  creditsAdded: number
+  licenseNote?: string
+  licenseStatus?: string
+  createdAt: string
+}
+
+interface AdminWalletTask {
+  id: string
+  serviceCode: string
+  status: string
+  requestedSize: string
+  serviceProfile: string
+  creditReserved: boolean
+  creditCharged: boolean
+  error?: string | null
+  createdAt: string
+  updatedAt: string
+  finishedAt?: string | null
+}
+
+interface AdminWalletLookupResponse {
+  wallet: AdminWalletRecord
+  redemptions: AdminWalletRedemption[]
+  tasks: AdminWalletTask[]
+}
+
 interface CreateLicenseResponse {
   keys: Array<{
     id: string
@@ -84,6 +126,8 @@ interface AdminState {
   licenseOffset: number
   licenseHasMore: boolean
   licenseSearch: string
+  walletLookupAddress: string
+  walletLookup: AdminWalletLookupResponse | null
   runtimeSettings: RuntimeSettings
   view: AdminView
 }
@@ -101,6 +145,8 @@ const state: AdminState = {
   licenseOffset: 0,
   licenseHasMore: false,
   licenseSearch: '',
+  walletLookupAddress: '',
+  walletLookup: null,
   runtimeSettings: {
     imageGlobalConcurrency: 6,
     imageProviderDefaultConcurrency: 2,
@@ -182,6 +228,7 @@ app.innerHTML = `
             <div class="tabs">
               <button class="tab active" type="button" data-tab="licenses">兑换码</button>
               <button class="tab" type="button" data-tab="profiles">服务商</button>
+              <button class="tab" type="button" data-tab="wallets">钱包</button>
             </div>
           </div>
           <div id="licensesPanel" class="tabpanel active">
@@ -256,6 +303,41 @@ app.innerHTML = `
               </div>
             </div>
           </div>
+          <div id="walletsPanel" class="tabpanel">
+            <div class="section-head">
+              <h2>钱包查询</h2>
+            </div>
+            <form id="walletLookupForm" class="list-toolbar">
+              <label class="search-field">钱包地址<input id="walletLookupAddress" name="address" type="search" autocomplete="off" placeholder="0x..."></label>
+              <div class="toolbar-actions">
+                <button class="primary" type="submit">查询</button>
+                <button id="clearWalletLookup" type="button">清空</button>
+              </div>
+            </form>
+            <div class="body wallet-summary" id="walletSummary" hidden></div>
+            <div class="section-head compact-head"><h2>权益</h2></div>
+            <div class="table-wrap">
+              <table class="wallet-table">
+                <thead><tr><th>服务</th><th>剩余次数</th><th>最大并发</th></tr></thead>
+                <tbody id="walletEntitlementsTable"></tbody>
+              </table>
+            </div>
+            <div class="section-head compact-head"><h2>兑换记录</h2></div>
+            <div class="table-wrap">
+              <table class="wallet-table">
+                <thead><tr><th>时间</th><th>服务</th><th>次数</th><th>兑换码</th><th>备注</th></tr></thead>
+                <tbody id="walletRedemptionsTable"></tbody>
+              </table>
+            </div>
+            <div class="section-head compact-head"><h2>最近任务</h2></div>
+            <div class="table-wrap">
+              <table class="wallet-table">
+                <thead><tr><th>时间</th><th>任务</th><th>服务</th><th>尺寸</th><th>状态</th><th>扣费</th><th>服务商</th><th>错误</th></tr></thead>
+                <tbody id="walletTasksTable"></tbody>
+              </table>
+            </div>
+            <div class="body"><div id="walletMessage" class="message"></div></div>
+          </div>
         </section>
       </div>
     </div>
@@ -308,6 +390,14 @@ const els = {
   licensePageInfo: mustGet<HTMLSpanElement>('licensePageInfo'),
   prevLicensePage: mustGet<HTMLButtonElement>('prevLicensePage'),
   nextLicensePage: mustGet<HTMLButtonElement>('nextLicensePage'),
+  walletLookupForm: mustGet<HTMLFormElement>('walletLookupForm'),
+  walletLookupAddress: mustGet<HTMLInputElement>('walletLookupAddress'),
+  clearWalletLookup: mustGet<HTMLButtonElement>('clearWalletLookup'),
+  walletSummary: mustGet<HTMLDivElement>('walletSummary'),
+  walletEntitlementsTable: mustGet<HTMLTableSectionElement>('walletEntitlementsTable'),
+  walletRedemptionsTable: mustGet<HTMLTableSectionElement>('walletRedemptionsTable'),
+  walletTasksTable: mustGet<HTMLTableSectionElement>('walletTasksTable'),
+  walletMessage: mustGet<HTMLDivElement>('walletMessage'),
   runtimeSettingsForm: mustGet<HTMLFormElement>('runtimeSettingsForm'),
   runtimeSettingsMessage: mustGet<HTMLDivElement>('runtimeSettingsMessage'),
   refreshRuntimeSettings: mustGet<HTMLButtonElement>('refreshRuntimeSettings'),
@@ -327,6 +417,7 @@ setAdminVisible(Boolean(state.token))
 renderCreatedKeys()
 renderLicenses()
 renderProfiles()
+renderWalletLookup()
 renderRuntimeSettings()
 bindEvents()
 
@@ -427,6 +518,24 @@ function statusPill(value: string): string {
   return `<span class="pill ${kind}">${h(value || '-')}</span>`
 }
 
+function compactID(value: string): string {
+  const text = String(value || '')
+  if (text.length <= 16) return text
+  return `${text.slice(0, 8)}…${text.slice(-6)}`
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return '-'
+  const ts = Date.parse(value)
+  if (!Number.isFinite(ts)) return value
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(ts))
+}
+
 function isExpired(value?: string | null): boolean {
   if (!value) return false
   const ts = Date.parse(value)
@@ -507,6 +616,46 @@ function renderProfiles(): void {
       .join('') || '<tr><td colspan="8">暂无服务商</td></tr>'
 }
 
+function renderWalletLookup(): void {
+  if (document.activeElement !== els.walletLookupAddress) {
+    els.walletLookupAddress.value = state.walletLookupAddress
+  }
+  const data = state.walletLookup
+  els.walletSummary.hidden = !data
+  if (!data) {
+    els.walletSummary.innerHTML = ''
+    els.walletEntitlementsTable.innerHTML = '<tr><td colspan="3">输入钱包地址后查询</td></tr>'
+    els.walletRedemptionsTable.innerHTML = '<tr><td colspan="5">输入钱包地址后查询</td></tr>'
+    els.walletTasksTable.innerHTML = '<tr><td colspan="8">输入钱包地址后查询</td></tr>'
+    return
+  }
+
+  const totalRemaining = data.wallet.entitlements.reduce((sum, item) => sum + Number(item.remaining || 0), 0)
+  els.walletSummary.innerHTML = `<div class="metric-row"><div><span>钱包</span><code>${h(data.wallet.address)}</code></div><div><span>剩余总次数</span><strong>${h(totalRemaining)}</strong></div><div><span>服务数</span><strong>${h(data.wallet.entitlements.length)}</strong></div><div><span>最近任务</span><strong>${h(data.tasks.length)}</strong></div></div>`
+  els.walletEntitlementsTable.innerHTML =
+    data.wallet.entitlements
+      .map(
+        (item) =>
+          `<tr><td>${h(item.label || serviceLabel(item.serviceCode))}<div class="hint">${h(item.serviceCode)}</div></td><td>${h(item.remaining)}</td><td>${h(item.maxConcurrent)}</td></tr>`,
+      )
+      .join('') || '<tr><td colspan="3">暂无权益</td></tr>'
+  els.walletRedemptionsTable.innerHTML =
+    data.redemptions
+      .map((item) => {
+        const note = item.licenseNote || ''
+        return `<tr><td>${h(formatDateTime(item.createdAt))}</td><td>${h(serviceLabel(item.serviceCode))}<div class="hint">${h(item.serviceCode)}</div></td><td>${h(item.creditsAdded)}</td><td><code title="${h(item.licenseKeyId)}">${h(compactID(item.licenseKeyId))}</code></td><td>${note ? h(note) : '<span class="pill">未填写</span>'}</td></tr>`
+      })
+      .join('') || '<tr><td colspan="5">暂无兑换记录</td></tr>'
+  els.walletTasksTable.innerHTML =
+    data.tasks
+      .map((task) => {
+        const charged = task.creditCharged ? '<span class="pill ok">已扣费</span>' : task.creditReserved ? '<span class="pill warn">已预占</span>' : '<span class="pill">未扣费</span>'
+        const error = task.error ? `<span class="task-error" title="${h(task.error)}">${h(task.error)}</span>` : '-'
+        return `<tr><td>${h(formatDateTime(task.createdAt))}</td><td><code title="${h(task.id)}">${h(compactID(task.id))}</code></td><td>${h(serviceLabel(task.serviceCode))}</td><td>${h(task.requestedSize || '-')}</td><td>${statusPill(task.status)}</td><td>${charged}</td><td>${h(task.serviceProfile || '-')}</td><td>${error}</td></tr>`
+      })
+      .join('') || '<tr><td colspan="8">暂无生成任务</td></tr>'
+}
+
 function renderRuntimeSettings(): void {
   field<HTMLInputElement>(els.runtimeSettingsForm, 'imageGlobalConcurrency').value = String(state.runtimeSettings.imageGlobalConcurrency)
   field<HTMLInputElement>(els.runtimeSettingsForm, 'imageProviderDefaultConcurrency').value = String(state.runtimeSettings.imageProviderDefaultConcurrency)
@@ -546,6 +695,17 @@ async function loadRuntimeSettings(): Promise<void> {
   const data = await api<RuntimeSettingsResponse>('/admin/runtime-settings')
   state.runtimeSettings = data.settings || state.runtimeSettings
   renderRuntimeSettings()
+}
+
+async function loadWalletLookup(address: string): Promise<void> {
+  const normalized = address.trim().toLowerCase()
+  if (!/^0x[0-9a-f]{40}$/.test(normalized)) {
+    throw new Error('钱包地址格式无效')
+  }
+  const data = await api<AdminWalletLookupResponse>(`/admin/wallets/${encodeURIComponent(normalized)}`)
+  state.walletLookupAddress = normalized
+  state.walletLookup = data
+  renderWalletLookup()
 }
 
 async function refreshAll(): Promise<void> {
@@ -705,6 +865,27 @@ function bindEvents(): void {
 
   els.deleteSelectedLicenses.addEventListener('click', () => {
     deleteLicenseIds(state.selectedLicenseIds).catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.walletLookupForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const address = els.walletLookupAddress.value.trim()
+    message(els.walletMessage, '正在查询...')
+    loadWalletLookup(address)
+      .then(() => message(els.walletMessage, '钱包数据已载入', 'ok'))
+      .catch((error: Error) => {
+        state.walletLookup = null
+        renderWalletLookup()
+        message(els.walletMessage, error.message, 'bad')
+      })
+  })
+
+  els.clearWalletLookup.addEventListener('click', () => {
+    state.walletLookupAddress = ''
+    state.walletLookup = null
+    els.walletLookupAddress.value = ''
+    renderWalletLookup()
+    message(els.walletMessage, '')
   })
 
   els.refreshProfiles.addEventListener('click', () => {
