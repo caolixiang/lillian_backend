@@ -41,6 +41,23 @@ func TestLicenseWalletRedemptionMigrationAddsServiceAndRedeemColumns(t *testing.
 	}
 }
 
+func TestTaskWalletAccountingMigrationAddsTaskWalletFields(t *testing.T) {
+	sql := readMigration(t, "0007_task_wallet_accounting.sql")
+	for _, want := range []string{
+		"ALTER COLUMN license_key_id DROP NOT NULL",
+		"ALTER COLUMN activation_id DROP NOT NULL",
+		"ADD COLUMN IF NOT EXISTS wallet_id TEXT REFERENCES wallets(id) ON DELETE SET NULL",
+		"ADD COLUMN IF NOT EXISTS service_code TEXT",
+		"ADD COLUMN IF NOT EXISTS credit_reserved BOOLEAN NOT NULL DEFAULT false",
+		"ADD COLUMN IF NOT EXISTS credit_charged BOOLEAN NOT NULL DEFAULT false",
+		"idx_tasks_wallet_service_status",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))

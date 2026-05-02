@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -31,6 +32,7 @@ const (
 
 type taskPayload struct {
 	Prompt             string         `json:"prompt"`
+	WalletAddress      string         `json:"walletAddress"`
 	Params             map[string]any `json:"params"`
 	InputImageDataURLs []string       `json:"inputImageDataUrls"`
 	MaskDataURL        string         `json:"maskDataUrl,omitempty"`
@@ -40,6 +42,10 @@ type taskRow struct {
 	ID                 string
 	LicenseKeyID       string
 	ActivationID       string
+	WalletID           string
+	ServiceCode        string
+	CreditReserved     bool
+	CreditCharged      bool
 	Status             string
 	Tier               string
 	RequestedSize      string
@@ -125,8 +131,7 @@ func (s *Server) processNextQueuedTask(ctx context.Context) bool {
 }
 
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
-	auth, ok := s.verifyActivation(w, r)
-	if !ok {
+	if !s.requireDatabase(w) {
 		return
 	}
 	if s.store == nil {
@@ -146,6 +151,15 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if body.Params == nil {
 		body.Params = map[string]any{}
 	}
+	walletAddress := strings.ToLower(strings.TrimSpace(body.WalletAddress))
+	if walletAddress == "" {
+		walletAddress = strings.ToLower(strings.TrimSpace(stringParam(body.Params, "walletAddress")))
+	}
+	if !isWalletAddress(walletAddress) {
+		errorJSON(w, http.StatusBadRequest, "钱包地址格式无效")
+		return
+	}
+	body.WalletAddress = walletAddress
 	requestedSize, requestedSizeTier := normalizeTaskSize(body.Params)
 	body.Params["size"] = requestedSize
 	body.Params["output_format"] = "png"
@@ -156,7 +170,22 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := contextWithTimeout(r, 10*time.Second)
 	defer cancel()
-	profile, err := s.selectServiceProfile(ctx, auth.Tier, requestedSize, requestedSizeTier, nil)
+
+	wallet, err := s.wallets.WalletByAddress(ctx, walletAddress)
+	if errors.Is(err, errWalletNotFound) {
+		errorJSON(w, http.StatusNotFound, "钱包不存在")
+		return
+	}
+	if err != nil {
+		errorJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	entitlement, err := selectWalletServiceForGeneration(wallet.Entitlements, requestedSizeTier)
+	if err != nil {
+		errorJSON(w, http.StatusForbidden, err.Error())
+		return
+	}
+	profile, err := s.selectServiceProfileForWallet(ctx, entitlement.ServiceCode, requestedSize, requestedSizeTier, nil)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		if strings.Contains(err.Error(), "不支持") {
@@ -185,51 +214,61 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 
+	var lockedRemaining int
+	var lockedMaxConcurrent int
+	if err := tx.QueryRow(ctx, `
+		SELECT remaining, max_concurrent
+		FROM wallet_entitlements
+		WHERE wallet_id = $1 AND service_code = $2
+		FOR UPDATE
+	`, wallet.Wallet.ID, entitlement.ServiceCode).Scan(&lockedRemaining, &lockedMaxConcurrent); err != nil {
+		if errorsIsNoRows(err) {
+			errorJSON(w, http.StatusForbidden, "钱包权益次数不足")
+			return
+		}
+		errorJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if lockedRemaining <= 0 {
+		errorJSON(w, http.StatusForbidden, "钱包权益次数不足")
+		return
+	}
+	if lockedMaxConcurrent <= 0 {
+		lockedMaxConcurrent = defaultMaxConcurrent
+	}
+
 	var activeTasks int
 	if err := tx.QueryRow(ctx, `
 		SELECT COUNT(*)
 		FROM tasks
-		WHERE license_key_id = $1 AND status IN ('queued', 'running')
-	`, auth.LicenseKeyID).Scan(&activeTasks); err != nil {
+		WHERE wallet_id = $1 AND service_code = $2 AND status IN ('queued', 'running')
+	`, wallet.Wallet.ID, entitlement.ServiceCode).Scan(&activeTasks); err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if activeTasks >= auth.MaxConcurrent {
+	if activeTasks >= lockedMaxConcurrent {
 		errorJSON(w, http.StatusTooManyRequests, "并发任务已达上限")
 		return
 	}
 	tag, err := tx.Exec(ctx, `
-		UPDATE license_keys
-		SET remaining_credits = remaining_credits - 1, updated_at = $1
-		WHERE id = $2 AND remaining_credits > 0 AND status = 'active'
-	`, now, auth.LicenseKeyID)
+		UPDATE wallet_entitlements
+		SET remaining = remaining - 1, updated_at = $1
+		WHERE wallet_id = $2 AND service_code = $3
+	`, now, wallet.Wallet.ID, entitlement.ServiceCode)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if tag.RowsAffected() != 1 {
-		errorJSON(w, http.StatusForbidden, "兑换密匙次数已用完")
+		errorJSON(w, http.StatusForbidden, "钱包权益次数不足")
 		return
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO tasks (
-			id, license_key_id, activation_id, status, tier, requested_size,
-			service_profile, request_json, created_at, updated_at
-		) VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9)
-	`, taskID, auth.LicenseKeyID, auth.ActivationID, auth.Tier, requestedSize, profile.ID, requestJSON, now, now)
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	ledgerID, err := randomUUID()
-	if err != nil {
-		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO credit_ledger (id, license_key_id, task_id, type, amount, created_at, note)
-		VALUES ($1, $2, $3, 'reserve', -1, $4, 'task created')
-	`, ledgerID, auth.LicenseKeyID, taskID, now)
+			id, license_key_id, activation_id, wallet_id, service_code, credit_reserved, credit_charged,
+			status, tier, requested_size, service_profile, request_json, created_at, updated_at
+		) VALUES ($1, NULL, NULL, $2, $3, true, false, 'queued', $4, $5, $6, $7, $8, $9)
+	`, taskID, wallet.Wallet.ID, entitlement.ServiceCode, tierForServiceCode(entitlement.ServiceCode), requestedSize, profile.ID, requestJSON, now, now)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -242,16 +281,18 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"id":               taskID,
 		"status":           "queued",
-		"remainingCredits": maxInt(0, auth.RemainingCredits-1),
+		"wallet":           publicWallet(walletSnapshot{Wallet: wallet.Wallet, Entitlements: replaceEntitlementRemaining(wallet.Entitlements, entitlement.ServiceCode, lockedRemaining-1)}),
+		"serviceCode":      entitlement.ServiceCode,
+		"remainingCredits": maxInt(0, lockedRemaining-1),
 	})
 }
 
 func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
-	auth, ok := s.verifyActivation(w, r)
+	wallet, ok := s.walletFromRequest(w, r)
 	if !ok {
 		return
 	}
-	task, ok := s.taskForLicense(w, r, chi.URLParam(r, "id"), auth.LicenseKeyID)
+	task, ok := s.taskForWallet(w, r, chi.URLParam(r, "id"), wallet.ID)
 	if !ok {
 		return
 	}
@@ -259,7 +300,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetTaskImage(w http.ResponseWriter, r *http.Request) {
-	auth, ok := s.verifyActivation(w, r)
+	wallet, ok := s.walletFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -267,7 +308,7 @@ func (s *Server) handleGetTaskImage(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusServiceUnavailable, "object store is not configured")
 		return
 	}
-	task, ok := s.taskForLicense(w, r, chi.URLParam(r, "id"), auth.LicenseKeyID)
+	task, ok := s.taskForWallet(w, r, chi.URLParam(r, "id"), wallet.ID)
 	if !ok {
 		return
 	}
@@ -301,11 +342,52 @@ func (s *Server) handleGetTaskImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, body)
 }
 
+func (s *Server) walletFromRequest(w http.ResponseWriter, r *http.Request) (walletRecord, bool) {
+	if !s.requireWalletStore(w) {
+		return walletRecord{}, false
+	}
+	address := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("walletAddress")))
+	if address == "" {
+		address = strings.ToLower(strings.TrimSpace(r.Header.Get("X-Wallet-Address")))
+	}
+	if !isWalletAddress(address) {
+		errorJSON(w, http.StatusBadRequest, "钱包地址格式无效")
+		return walletRecord{}, false
+	}
+	ctx, cancel := contextWithTimeout(r, 5*time.Second)
+	defer cancel()
+	snapshot, err := s.wallets.WalletByAddress(ctx, address)
+	if errors.Is(err, errWalletNotFound) {
+		errorJSON(w, http.StatusNotFound, "钱包不存在")
+		return walletRecord{}, false
+	}
+	if err != nil {
+		errorJSON(w, http.StatusInternalServerError, err.Error())
+		return walletRecord{}, false
+	}
+	return snapshot.Wallet, true
+}
+
 func (s *Server) taskForLicense(w http.ResponseWriter, r *http.Request, taskID, licenseKeyID string) (taskRow, bool) {
 	ctx, cancel := contextWithTimeout(r, 5*time.Second)
 	defer cancel()
 	task, err := s.taskByID(ctx, taskID)
 	if errorsIsNoRows(err) || task.LicenseKeyID != licenseKeyID {
+		errorJSON(w, http.StatusNotFound, "任务不存在")
+		return taskRow{}, false
+	}
+	if err != nil {
+		errorJSON(w, http.StatusInternalServerError, err.Error())
+		return taskRow{}, false
+	}
+	return task, true
+}
+
+func (s *Server) taskForWallet(w http.ResponseWriter, r *http.Request, taskID, walletID string) (taskRow, bool) {
+	ctx, cancel := contextWithTimeout(r, 5*time.Second)
+	defer cancel()
+	task, err := s.taskByID(ctx, taskID)
+	if errorsIsNoRows(err) || task.WalletID != walletID {
 		errorJSON(w, http.StatusNotFound, "任务不存在")
 		return taskRow{}, false
 	}
@@ -331,7 +413,9 @@ func (s *Server) claimNextQueuedTask(ctx context.Context, settings runtimeSettin
 	}
 
 	task, err := scanTaskRow(tx.QueryRow(ctx, `
-		SELECT t.id, t.license_key_id, t.activation_id, t.status, t.tier, t.requested_size,
+		SELECT t.id, COALESCE(t.license_key_id, ''), COALESCE(t.activation_id, ''),
+			COALESCE(t.wallet_id, ''), COALESCE(t.service_code, ''),
+			t.credit_reserved, t.credit_charged, t.status, t.tier, t.requested_size,
 			t.service_profile, t.request_json, t.outputs_json, t.actual_params_json,
 			t.revised_prompts_json, t.error, t.created_at, t.updated_at, t.finished_at
 		FROM tasks t
@@ -377,7 +461,9 @@ func (s *Server) claimQueuedTaskByID(ctx context.Context, taskID string, setting
 	}
 
 	task, err := scanTaskRow(tx.QueryRow(ctx, `
-		SELECT t.id, t.license_key_id, t.activation_id, t.status, t.tier, t.requested_size,
+		SELECT t.id, COALESCE(t.license_key_id, ''), COALESCE(t.activation_id, ''),
+			COALESCE(t.wallet_id, ''), COALESCE(t.service_code, ''),
+			t.credit_reserved, t.credit_charged, t.status, t.tier, t.requested_size,
 			t.service_profile, t.request_json, t.outputs_json, t.actual_params_json,
 			t.revised_prompts_json, t.error, t.created_at, t.updated_at, t.finished_at
 		FROM tasks t
@@ -478,7 +564,13 @@ func (s *Server) executeTask(ctx context.Context, task taskRow) error {
 		if attempt >= serviceProfileFallbackRetries {
 			break
 		}
-		next, selectErr := s.selectServiceProfile(ctx, task.Tier, task.RequestedSize, stringParam(payload.Params, "size_tier"), tried)
+		var next serviceProfileRow
+		var selectErr error
+		if task.ServiceCode != "" {
+			next, selectErr = s.selectServiceProfileForWallet(ctx, task.ServiceCode, task.RequestedSize, stringParam(payload.Params, "size_tier"), tried)
+		} else {
+			next, selectErr = s.selectServiceProfile(ctx, task.Tier, task.RequestedSize, stringParam(payload.Params, "size_tier"), tried)
+		}
 		if selectErr != nil {
 			break
 		}
@@ -511,6 +603,7 @@ func (s *Server) executeTask(ctx context.Context, task taskRow) error {
 	_, err = s.db.Exec(ctx, `
 		UPDATE tasks
 		SET status = 'done',
+			credit_charged = true,
 			outputs_json = $1,
 			actual_params_json = $2,
 			revised_prompts_json = $3,
@@ -522,10 +615,12 @@ func (s *Server) executeTask(ctx context.Context, task taskRow) error {
 		return err
 	}
 	ledgerID, _ := randomUUID()
-	_, _ = s.db.Exec(ctx, `
-		INSERT INTO credit_ledger (id, license_key_id, task_id, type, amount, created_at, note)
-		VALUES ($1, $2, $3, 'consume', 0, $4, 'task completed')
-	`, ledgerID, task.LicenseKeyID, task.ID, finishedAt)
+	if task.LicenseKeyID != "" {
+		_, _ = s.db.Exec(ctx, `
+			INSERT INTO credit_ledger (id, license_key_id, task_id, type, amount, created_at, note)
+			VALUES ($1, $2, $3, 'consume', 0, $4, 'task completed')
+		`, ledgerID, task.LicenseKeyID, task.ID, finishedAt)
+	}
 	return nil
 }
 
@@ -730,14 +825,20 @@ func (s *Server) publicTask(r *http.Request, task taskRow) map[string]any {
 	outputs := decodeOutputs(task.OutputsJSON)
 	publicOutputs := make([]map[string]any, 0, len(outputs))
 	for i, output := range outputs {
+		outputURL := fmt.Sprintf("%s/api/tasks/%s/images/%d", base, task.ID, i)
+		if walletAddress := requestWalletAddress(r); isWalletAddress(walletAddress) {
+			outputURL += "?walletAddress=" + url.QueryEscape(walletAddress)
+		}
 		publicOutputs = append(publicOutputs, map[string]any{
-			"url":         fmt.Sprintf("%s/api/tasks/%s/images/%d", base, task.ID, i),
+			"url":         outputURL,
 			"contentType": output.ContentType,
 		})
 	}
 	return map[string]any{
 		"id":             task.ID,
 		"status":         task.Status,
+		"walletId":       task.WalletID,
+		"serviceCode":    task.ServiceCode,
 		"error":          nullableString(task.Error),
 		"requestedSize":  task.RequestedSize,
 		"serviceProfile": task.ServiceProfile,
@@ -750,9 +851,22 @@ func (s *Server) publicTask(r *http.Request, task taskRow) map[string]any {
 	}
 }
 
+func requestWalletAddress(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	address := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("walletAddress")))
+	if address == "" {
+		address = strings.ToLower(strings.TrimSpace(r.Header.Get("X-Wallet-Address")))
+	}
+	return address
+}
+
 func (s *Server) taskByID(ctx context.Context, taskID string) (taskRow, error) {
 	return scanTaskRow(s.db.QueryRow(ctx, `
-		SELECT id, license_key_id, activation_id, status, tier, requested_size,
+		SELECT id, COALESCE(license_key_id, ''), COALESCE(activation_id, ''),
+			COALESCE(wallet_id, ''), COALESCE(service_code, ''),
+			credit_reserved, credit_charged, status, tier, requested_size,
 			service_profile, request_json, outputs_json, actual_params_json,
 			revised_prompts_json, error, created_at, updated_at, finished_at
 		FROM tasks
@@ -766,6 +880,10 @@ func scanTaskRow(row scanner) (taskRow, error) {
 		&task.ID,
 		&task.LicenseKeyID,
 		&task.ActivationID,
+		&task.WalletID,
+		&task.ServiceCode,
+		&task.CreditReserved,
+		&task.CreditCharged,
 		&task.Status,
 		&task.Tier,
 		&task.RequestedSize,
@@ -787,6 +905,18 @@ func (s *Server) selectServiceProfile(ctx context.Context, tier, size, sizeTier 
 	if err != nil {
 		return serviceProfileRow{}, err
 	}
+	return s.selectServiceProfileFromBuckets(ctx, buckets, exclude)
+}
+
+func (s *Server) selectServiceProfileForWallet(ctx context.Context, serviceCode, size, sizeTier string, exclude []string) (serviceProfileRow, error) {
+	buckets, err := candidateBucketsForService(serviceCode, sizeTier)
+	if err != nil {
+		return serviceProfileRow{}, err
+	}
+	return s.selectServiceProfileFromBuckets(ctx, buckets, exclude)
+}
+
+func (s *Server) selectServiceProfileFromBuckets(ctx context.Context, buckets []string, exclude []string) (serviceProfileRow, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, label, tier_bucket, api_base_url, api_key_ciphertext, model, api_mode,
 			codex_cli, priority, max_concurrent, status, selection_count, success_count, failure_count,
@@ -874,16 +1004,31 @@ func (s *Server) failTaskAndRefund(ctx context.Context, task taskRow, message st
 		SET status = 'error', error = $1, updated_at = $2, finished_at = $2
 		WHERE id = $3 AND status = 'running'
 	`, message, now, task.ID)
-	_, _ = s.db.Exec(ctx, `
-		UPDATE license_keys
-		SET remaining_credits = remaining_credits + 1, updated_at = $1
-		WHERE id = $2
-	`, now, task.LicenseKeyID)
-	ledgerID, _ := randomUUID()
-	_, _ = s.db.Exec(ctx, `
-		INSERT INTO credit_ledger (id, license_key_id, task_id, type, amount, created_at, note)
-		VALUES ($1, $2, $3, 'refund', 1, $4, 'task failed before producing output')
-	`, ledgerID, task.LicenseKeyID, task.ID, now)
+	if task.WalletID != "" && task.ServiceCode != "" && task.CreditReserved && !task.CreditCharged {
+		_, _ = s.db.Exec(ctx, `
+			UPDATE wallet_entitlements
+			SET remaining = remaining + 1, updated_at = $1
+			WHERE wallet_id = $2 AND service_code = $3
+		`, now, task.WalletID, task.ServiceCode)
+		_, _ = s.db.Exec(ctx, `
+			UPDATE tasks
+			SET credit_reserved = false, updated_at = $1
+			WHERE id = $2
+		`, now, task.ID)
+		return
+	}
+	if task.LicenseKeyID != "" {
+		_, _ = s.db.Exec(ctx, `
+			UPDATE license_keys
+			SET remaining_credits = remaining_credits + 1, updated_at = $1
+			WHERE id = $2
+		`, now, task.LicenseKeyID)
+		ledgerID, _ := randomUUID()
+		_, _ = s.db.Exec(ctx, `
+			INSERT INTO credit_ledger (id, license_key_id, task_id, type, amount, created_at, note)
+			VALUES ($1, $2, $3, 'refund', 1, $4, 'task failed before producing output')
+		`, ledgerID, task.LicenseKeyID, task.ID, now)
+	}
 }
 
 func endpointURL(profile serviceProfileRow, path string) string {
@@ -918,6 +1063,67 @@ func candidateBuckets(tier, sizeTier string) ([]string, error) {
 		return []string{"1k", "hd"}, nil
 	}
 	return []string{"1k"}, nil
+}
+
+func selectWalletServiceForGeneration(entitlements []walletEntitlement, sizeTier string) (walletEntitlement, error) {
+	sizeTier = strings.ToUpper(strings.TrimSpace(sizeTier))
+	if sizeTier == "2K" || sizeTier == "4K" {
+		if entitlement, ok := walletEntitlementWithBalance(entitlements, serviceCodeImage2HD); ok {
+			return entitlement, nil
+		}
+		return walletEntitlement{}, fmt.Errorf("当前钱包没有可用的 HD 生成权益")
+	}
+	if entitlement, ok := walletEntitlementWithBalance(entitlements, serviceCodeImage2SD); ok {
+		return entitlement, nil
+	}
+	if entitlement, ok := walletEntitlementWithBalance(entitlements, serviceCodeImage2HD); ok {
+		return entitlement, nil
+	}
+	return walletEntitlement{}, fmt.Errorf("当前钱包没有可用的图片生成权益")
+}
+
+func walletEntitlementWithBalance(entitlements []walletEntitlement, serviceCode string) (walletEntitlement, bool) {
+	for _, entitlement := range entitlements {
+		if entitlement.ServiceCode == serviceCode && entitlement.Remaining > 0 {
+			if entitlement.MaxConcurrent <= 0 {
+				entitlement.MaxConcurrent = defaultMaxConcurrent
+			}
+			return entitlement, true
+		}
+	}
+	return walletEntitlement{}, false
+}
+
+func candidateBucketsForService(serviceCode, sizeTier string) ([]string, error) {
+	sizeTier = strings.ToUpper(strings.TrimSpace(sizeTier))
+	if sizeTier == "2K" || sizeTier == "4K" {
+		if serviceCode != serviceCodeImage2HD {
+			return nil, fmt.Errorf("当前钱包权益不支持 2K/4K 高清图片")
+		}
+		return []string{"hd"}, nil
+	}
+	if serviceCode == serviceCodeImage2HD {
+		return []string{"1k", "hd"}, nil
+	}
+	return []string{"1k"}, nil
+}
+
+func tierForServiceCode(serviceCode string) string {
+	if serviceCode == serviceCodeImage2HD {
+		return "hd"
+	}
+	return "basic"
+}
+
+func replaceEntitlementRemaining(entitlements []walletEntitlement, serviceCode string, remaining int) []walletEntitlement {
+	result := append([]walletEntitlement(nil), entitlements...)
+	for i := range result {
+		if result[i].ServiceCode == serviceCode {
+			result[i].Remaining = maxInt(0, remaining)
+			return result
+		}
+	}
+	return result
 }
 
 func aspectRatioFromSize(size string) string {
