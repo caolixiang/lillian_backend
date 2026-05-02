@@ -501,7 +501,7 @@ func serviceLabel(serviceCode string) string {
 	case serviceCodeImage2SD:
 		return "标清"
 	case serviceCodeImage2HD:
-		return "HD"
+		return "HD 2K/4K"
 	default:
 		return serviceCode
 	}

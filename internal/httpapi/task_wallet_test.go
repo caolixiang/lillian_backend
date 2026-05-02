@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestSelectWalletServiceForGenerationPrefersSDFor1KAndFallsBackToHD(t *testing.T) {
@@ -91,4 +95,83 @@ func TestPublicTaskIncludesWalletSnapshotForFrontendRefresh(t *testing.T) {
 	if len(responseWallet.Entitlements) != 1 || responseWallet.Entitlements[0].Remaining != 2 {
 		t.Fatalf("wallet.entitlements = %#v", responseWallet.Entitlements)
 	}
+}
+
+func TestServiceLabelReturnsUserFacingHDLabel(t *testing.T) {
+	if got := serviceLabel(serviceCodeImage2HD); got != "HD 2K/4K" {
+		t.Fatalf("serviceLabel(%q) = %q", serviceCodeImage2HD, got)
+	}
+}
+
+func TestRecoverStaleWalletRunningTasksRefundsReservedCredit(t *testing.T) {
+	tx := &fakeStaleTaskTx{
+		walletID:    "wallet-1",
+		serviceCode: serviceCodeImage2SD,
+	}
+
+	recovered, err := recoverStaleWalletRunningTasks(context.Background(), tx, time.Date(2026, 5, 2, 6, 0, 0, 0, time.UTC), time.Hour)
+	if err != nil {
+		t.Fatalf("recover stale tasks: %v", err)
+	}
+	if recovered != 1 {
+		t.Fatalf("recovered = %d", recovered)
+	}
+	if !tx.refunded {
+		t.Fatalf("reserved wallet credit was not refunded")
+	}
+	if !tx.markedError {
+		t.Fatalf("task was not marked error")
+	}
+}
+
+type fakeStaleTaskTx struct {
+	walletID    string
+	serviceCode string
+	refunded    bool
+	markedError bool
+}
+
+func (tx *fakeStaleTaskTx) Query(_ context.Context, sql string, _ ...any) (taskRows, error) {
+	if !strings.Contains(sql, "UPDATE tasks") {
+		return nil, nil
+	}
+	tx.markedError = true
+	return &singleTaskRows{walletID: tx.walletID, serviceCode: tx.serviceCode}, nil
+}
+
+func (tx *fakeStaleTaskTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(sql, "UPDATE wallet_entitlements"):
+		tx.refunded = true
+	}
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+type singleTaskRows struct {
+	walletID    string
+	serviceCode string
+	read        bool
+}
+
+func (r *singleTaskRows) Close() {}
+
+func (r *singleTaskRows) Err() error { return nil }
+
+func (r *singleTaskRows) Next() bool {
+	if r.read {
+		return false
+	}
+	r.read = true
+	return true
+}
+
+func (r *singleTaskRows) Scan(dest ...any) error {
+	values := []any{r.walletID, r.serviceCode}
+	for i := range dest {
+		switch target := dest[i].(type) {
+		case *string:
+			*target = values[i].(string)
+		}
+	}
+	return nil
 }

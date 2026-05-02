@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -26,6 +27,7 @@ const (
 	serviceProfileCooldownFailures = 2
 	serviceProfileCooldown         = 5 * time.Minute
 	serviceProfileFallbackRetries  = 1
+	taskStaleRecoveryGrace         = 2 * time.Minute
 	taskWorkerSlots                = 32
 	taskClaimAdvisoryLockKey       = 741190203
 )
@@ -80,6 +82,7 @@ func (s *Server) StartTaskWorkers(ctx context.Context) {
 	if s == nil || s.db == nil {
 		return
 	}
+	s.recoverStaleWalletRunningTasks(ctx)
 	concurrency := s.cfg.TaskWorkerConcurrency
 	if concurrency < taskWorkerSlots {
 		concurrency = taskWorkerSlots
@@ -108,6 +111,123 @@ func (s *Server) taskWorkerLoop(ctx context.Context) {
 			timer.Reset(delay)
 		}
 	}
+}
+
+func (s *Server) recoverStaleWalletRunningTasks(ctx context.Context) {
+	if s == nil || s.db == nil {
+		return
+	}
+	recoveryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	settings := s.loadRuntimeSettings(recoveryCtx)
+	staleAfter := time.Duration(settings.UpstreamTimeoutSeconds)*time.Second + taskStaleRecoveryGrace
+	tx, err := s.db.Begin(recoveryCtx)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("stale wallet task recovery failed: %v", err)
+		}
+		return
+	}
+	defer tx.Rollback(recoveryCtx)
+	recovered, err := recoverStaleWalletRunningTasks(recoveryCtx, staleTaskTx{tx: tx}, time.Now().UTC(), staleAfter)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("stale wallet task recovery failed: %v", err)
+		}
+		return
+	}
+	if err := tx.Commit(recoveryCtx); err != nil {
+		if s.logger != nil {
+			s.logger.Printf("stale wallet task recovery commit failed: %v", err)
+		}
+		return
+	}
+	if recovered > 0 && s.logger != nil {
+		s.logger.Printf("recovered %d stale wallet tasks", recovered)
+	}
+}
+
+type staleTaskStore interface {
+	Query(ctx context.Context, sql string, args ...any) (taskRows, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+type staleTaskTx struct {
+	tx pgx.Tx
+}
+
+func (s staleTaskTx) Query(ctx context.Context, sql string, args ...any) (taskRows, error) {
+	return s.tx.Query(ctx, sql, args...)
+}
+
+func (s staleTaskTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	return s.tx.Exec(ctx, sql, args...)
+}
+
+type taskRows interface {
+	Close()
+	Err() error
+	Next() bool
+	Scan(dest ...any) error
+}
+
+func recoverStaleWalletRunningTasks(ctx context.Context, store staleTaskStore, now time.Time, staleAfter time.Duration) (int, error) {
+	if staleAfter <= 0 {
+		staleAfter = time.Duration(defaultUpstreamTimeoutSeconds)*time.Second + taskStaleRecoveryGrace
+	}
+	cutoff := now.UTC().Add(-staleAfter)
+	rows, err := store.Query(ctx, `
+		UPDATE tasks
+		SET status = 'error',
+			error = $1,
+			credit_reserved = false,
+			updated_at = $2,
+			finished_at = $2
+		WHERE status = 'running'
+			AND wallet_id IS NOT NULL
+			AND service_code IS NOT NULL
+			AND credit_reserved = true
+			AND credit_charged = false
+			AND updated_at < $3
+		RETURNING wallet_id, service_code
+	`, "Task timed out before completion and reserved wallet credit was released", now, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type entitlementKey struct {
+		walletID    string
+		serviceCode string
+	}
+	refunds := map[entitlementKey]int{}
+	for rows.Next() {
+		var key entitlementKey
+		if err := rows.Scan(&key.walletID, &key.serviceCode); err != nil {
+			return 0, err
+		}
+		refunds[key]++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	recovered := 0
+	for key, count := range refunds {
+		tag, err := store.Exec(ctx, `
+			UPDATE wallet_entitlements
+			SET remaining = remaining + $1, updated_at = $2
+			WHERE wallet_id = $3 AND service_code = $4
+		`, count, now, key.walletID, key.serviceCode)
+		if err != nil {
+			return recovered, err
+		}
+		if tag.RowsAffected() != 1 {
+			return recovered, fmt.Errorf("wallet entitlement missing for stale task recovery: wallet_id=%s service_code=%s", key.walletID, key.serviceCode)
+		}
+		recovered += count
+	}
+	return recovered, nil
 }
 
 func (s *Server) processNextQueuedTask(ctx context.Context) bool {
