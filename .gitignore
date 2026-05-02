@@ -6,6 +6,7 @@
 bin/
 dist/
 tmp/
+.worktrees
 *.log
 web/admin/node_modules/
 web/admin/tsconfig.tsbuildinfo
