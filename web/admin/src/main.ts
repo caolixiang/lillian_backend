@@ -65,6 +65,7 @@ interface AdminWalletTask {
   status: string
   requestedSize: string
   serviceProfile: string
+  serviceProfileLabel?: string
   creditReserved: boolean
   creditCharged: boolean
   error?: string | null
@@ -644,7 +645,9 @@ function renderWalletLookup(): void {
       .map((task) => {
         const charged = task.creditCharged ? '<span class="pill ok">已扣费</span>' : task.creditReserved ? '<span class="pill warn">已预占</span>' : '<span class="pill">未扣费</span>'
         const error = task.error ? `<span class="task-error" title="${h(task.error)}">${h(task.error)}</span>` : '-'
-        return `<tr><td>${h(formatDateTime(task.createdAt))}</td><td><code title="${h(task.id)}">${h(compactID(task.id))}</code></td><td>${h(serviceLabel(task.serviceCode))}</td><td>${h(task.requestedSize || '-')}</td><td>${statusPill(task.status)}</td><td>${charged}</td><td>${h(task.serviceProfile || '-')}</td><td>${error}</td></tr>`
+        const provider = task.serviceProfileLabel || task.serviceProfile || '-'
+        const providerTitle = task.serviceProfile && task.serviceProfileLabel ? task.serviceProfile : provider
+        return `<tr><td>${h(formatDateTime(task.createdAt))}</td><td><code title="${h(task.id)}">${h(compactID(task.id))}</code></td><td>${h(serviceLabel(task.serviceCode))}</td><td>${h(task.requestedSize || '-')}</td><td>${statusPill(task.status)}</td><td>${charged}</td><td title="${h(providerTitle)}">${h(provider)}</td><td>${error}</td></tr>`
       })
       .join('') || '<tr><td colspan="8">暂无生成任务</td></tr>'
 }

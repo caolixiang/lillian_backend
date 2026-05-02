@@ -33,31 +33,33 @@ type adminWalletRedemption struct {
 }
 
 type adminWalletTask struct {
-	ID             string
-	ServiceCode    string
-	Status         string
-	RequestedSize  string
-	ServiceProfile string
-	CreditReserved bool
-	CreditCharged  bool
-	Error          sql.NullString
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	FinishedAt     sql.NullTime
+	ID                  string
+	ServiceCode         string
+	Status              string
+	RequestedSize       string
+	ServiceProfile      string
+	ServiceProfileLabel string
+	CreditReserved      bool
+	CreditCharged       bool
+	Error               sql.NullString
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	FinishedAt          sql.NullTime
 }
 
 type adminWalletTaskResponse struct {
-	ID             string `json:"id"`
-	ServiceCode    string `json:"serviceCode"`
-	Status         string `json:"status"`
-	RequestedSize  string `json:"requestedSize"`
-	ServiceProfile string `json:"serviceProfile"`
-	CreditReserved bool   `json:"creditReserved"`
-	CreditCharged  bool   `json:"creditCharged"`
-	Error          any    `json:"error"`
-	CreatedAt      string `json:"createdAt"`
-	UpdatedAt      string `json:"updatedAt"`
-	FinishedAt     any    `json:"finishedAt"`
+	ID                  string `json:"id"`
+	ServiceCode         string `json:"serviceCode"`
+	Status              string `json:"status"`
+	RequestedSize       string `json:"requestedSize"`
+	ServiceProfile      string `json:"serviceProfile"`
+	ServiceProfileLabel string `json:"serviceProfileLabel"`
+	CreditReserved      bool   `json:"creditReserved"`
+	CreditCharged       bool   `json:"creditCharged"`
+	Error               any    `json:"error"`
+	CreatedAt           string `json:"createdAt"`
+	UpdatedAt           string `json:"updatedAt"`
+	FinishedAt          any    `json:"finishedAt"`
 }
 
 func (s postgresWalletStore) AdminWalletSummary(ctx context.Context, address string) (adminWalletSummary, error) {
@@ -120,11 +122,13 @@ func (s postgresWalletStore) adminWalletRedemptions(ctx context.Context, walletI
 
 func (s postgresWalletStore) adminWalletTasks(ctx context.Context, walletID string) ([]adminWalletTask, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, COALESCE(service_code, ''), status, requested_size, service_profile,
-			credit_reserved, credit_charged, error, created_at, updated_at, finished_at
-		FROM tasks
-		WHERE wallet_id = $1
-		ORDER BY created_at DESC
+		SELECT t.id, COALESCE(t.service_code, ''), t.status, t.requested_size, t.service_profile,
+			COALESCE(sp.label, ''), t.credit_reserved, t.credit_charged, t.error,
+			t.created_at, t.updated_at, t.finished_at
+		FROM tasks t
+		LEFT JOIN service_profiles sp ON sp.id = t.service_profile
+		WHERE t.wallet_id = $1
+		ORDER BY t.created_at DESC
 		LIMIT 50
 	`, walletID)
 	if err != nil {
@@ -141,6 +145,7 @@ func (s postgresWalletStore) adminWalletTasks(ctx context.Context, walletID stri
 			&task.Status,
 			&task.RequestedSize,
 			&task.ServiceProfile,
+			&task.ServiceProfileLabel,
 			&task.CreditReserved,
 			&task.CreditCharged,
 			&task.Error,
@@ -199,17 +204,18 @@ func publicAdminWalletTasks(tasks []adminWalletTask) []adminWalletTaskResponse {
 	responses := make([]adminWalletTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
 		responses = append(responses, adminWalletTaskResponse{
-			ID:             task.ID,
-			ServiceCode:    task.ServiceCode,
-			Status:         task.Status,
-			RequestedSize:  task.RequestedSize,
-			ServiceProfile: task.ServiceProfile,
-			CreditReserved: task.CreditReserved,
-			CreditCharged:  task.CreditCharged,
-			Error:          nullableString(task.Error),
-			CreatedAt:      task.CreatedAt.UTC().Format(time.RFC3339Nano),
-			UpdatedAt:      task.UpdatedAt.UTC().Format(time.RFC3339Nano),
-			FinishedAt:     nullableTime(task.FinishedAt),
+			ID:                  task.ID,
+			ServiceCode:         task.ServiceCode,
+			Status:              task.Status,
+			RequestedSize:       task.RequestedSize,
+			ServiceProfile:      task.ServiceProfile,
+			ServiceProfileLabel: task.ServiceProfileLabel,
+			CreditReserved:      task.CreditReserved,
+			CreditCharged:       task.CreditCharged,
+			Error:               nullableString(task.Error),
+			CreatedAt:           task.CreatedAt.UTC().Format(time.RFC3339Nano),
+			UpdatedAt:           task.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			FinishedAt:          nullableTime(task.FinishedAt),
 		})
 	}
 	return responses

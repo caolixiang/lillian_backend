@@ -38,11 +38,13 @@ func TestAdminWalletLookupReturnsWalletRedemptionsAndRecentTasks(t *testing.T) {
 			},
 			Tasks: []adminWalletTask{
 				{
-					ID:            "task-1",
-					ServiceCode:   serviceCodeImage2SD,
-					Status:        "done",
-					RequestedSize: "1024x1824",
-					CreatedAt:     time.Date(2026, 5, 2, 3, 0, 0, 0, time.UTC),
+					ID:                  "task-1",
+					ServiceCode:         serviceCodeImage2SD,
+					Status:              "done",
+					RequestedSize:       "1024x1824",
+					ServiceProfile:      "provider-1k-ohmytoken-65bdcaa0",
+					ServiceProfileLabel: "OhMyToken 标清主线路",
+					CreatedAt:           time.Date(2026, 5, 2, 3, 0, 0, 0, time.UTC),
 				},
 			},
 		},
@@ -73,6 +75,12 @@ func TestAdminWalletLookupReturnsWalletRedemptionsAndRecentTasks(t *testing.T) {
 	}
 	if len(payload.Tasks) != 1 || payload.Tasks[0].ID != "task-1" {
 		t.Fatalf("tasks = %#v", payload.Tasks)
+	}
+	if payload.Tasks[0].ServiceProfile != "provider-1k-ohmytoken-65bdcaa0" {
+		t.Fatalf("serviceProfile = %q", payload.Tasks[0].ServiceProfile)
+	}
+	if payload.Tasks[0].ServiceProfileLabel != "OhMyToken 标清主线路" {
+		t.Fatalf("serviceProfileLabel = %q", payload.Tasks[0].ServiceProfileLabel)
 	}
 }
 
