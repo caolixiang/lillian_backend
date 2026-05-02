@@ -11,12 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/CookSleep/lillian_backend/internal/config"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 )
@@ -273,6 +275,10 @@ func (s *Server) handleEPUSDTCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateEPUSDTPaidCallback(order, payload, s.cfg.EPUSDT); err != nil {
+		errorJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if order.Status != "paid" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE wallets
@@ -668,6 +674,99 @@ func writePlainOK(w http.ResponseWriter) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+func validateEPUSDTPaidCallback(order paymentOrder, payload map[string]any, cfg config.EPUSDTConfig) error {
+	if intValue(payload["status"]) != 2 {
+		return errors.New("EPUSDT 回调状态不是已支付")
+	}
+	if err := validateEPUSDTCallbackAmount(order.AmountUSDT, payload); err != nil {
+		return err
+	}
+	if !optionalCallbackFieldMatches(payload, "pid", cfg.PID) {
+		return errors.New("EPUSDT 回调商户号与配置不一致")
+	}
+	if !optionalCallbackFieldMatches(payload, "currency", cfg.Currency) {
+		return errors.New("EPUSDT 回调币种与配置不一致")
+	}
+	if !optionalCallbackFieldMatches(payload, "token", cfg.Token) {
+		return errors.New("EPUSDT 回调代币与配置不一致")
+	}
+	if !optionalCallbackFieldMatches(payload, "network", cfg.Network) {
+		return errors.New("EPUSDT 回调网络与配置不一致")
+	}
+	callbackTradeID := strings.TrimSpace(stringValue(payload["trade_id"]))
+	if strings.TrimSpace(order.ProviderTradeID) != "" && callbackTradeID != "" && callbackTradeID != strings.TrimSpace(order.ProviderTradeID) {
+		return errors.New("EPUSDT 回调交易号与订单不一致")
+	}
+	return nil
+}
+
+func validateEPUSDTCallbackAmount(orderAmount string, payload map[string]any) error {
+	if payloadFieldHasValue(payload, "amount") {
+		if !decimalStringEqual(stringValue(payload["amount"]), orderAmount) {
+			return errors.New("EPUSDT 回调金额与订单不一致")
+		}
+		return nil
+	}
+	if payloadFieldHasValue(payload, "actual_amount") {
+		if !decimalStringEqual(stringValue(payload["actual_amount"]), orderAmount) {
+			return errors.New("EPUSDT 回调金额与订单不一致")
+		}
+		return nil
+	}
+	return errors.New("EPUSDT 回调缺少金额")
+}
+
+func optionalCallbackFieldMatches(payload map[string]any, key string, expected string) bool {
+	if strings.TrimSpace(expected) == "" || !payloadFieldHasValue(payload, key) {
+		return true
+	}
+	actual := strings.TrimSpace(stringValue(payload[key]))
+	if key == "network" {
+		return normalizePaymentNetwork(actual) == normalizePaymentNetwork(expected)
+	}
+	return strings.EqualFold(actual, strings.TrimSpace(expected))
+}
+
+func payloadFieldHasValue(payload map[string]any, key string) bool {
+	raw, ok := payload[key]
+	return ok && strings.TrimSpace(stringValue(raw)) != ""
+}
+
+func decimalStringEqual(a string, b string) bool {
+	left, ok := decimalRat(a)
+	if !ok {
+		return false
+	}
+	right, ok := decimalRat(b)
+	if !ok {
+		return false
+	}
+	return left.Cmp(right) == 0
+}
+
+func decimalRat(value string) (*big.Rat, bool) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return nil, false
+	}
+	rat, ok := new(big.Rat).SetString(normalized)
+	return rat, ok
+}
+
+func normalizePaymentNetwork(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "-", "")
+	normalized = strings.ReplaceAll(normalized, "_", "")
+	switch normalized {
+	case "trc20":
+		return "tron"
+	case "erc20":
+		return "ethereum"
+	default:
+		return normalized
+	}
+}
+
 func epusdtPaymentStatusName(status int) string {
 	switch status {
 	case 1:
@@ -747,6 +846,8 @@ func safeIDPart(value string) string {
 
 func stringValue(value any) string {
 	switch v := value.(type) {
+	case nil:
+		return ""
 	case string:
 		return v
 	case []byte:

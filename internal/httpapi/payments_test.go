@@ -69,6 +69,134 @@ func TestCreateEPUSDTTransactionDecodesPaymentURL(t *testing.T) {
 	}
 }
 
+func TestValidateEPUSDTPaidCallback(t *testing.T) {
+	order := paymentOrder{
+		ProviderTradeID: "T202605031234",
+		AmountUSDT:      "10.00",
+	}
+	cfg := config.EPUSDTConfig{
+		PID:      "merchant-1",
+		Currency: "USDT",
+		Token:    "USDT",
+		Network:  "TRON",
+	}
+	tests := []struct {
+		name    string
+		payload map[string]any
+		wantErr bool
+	}{
+		{
+			name: "valid amount and asset",
+			payload: map[string]any{
+				"status":   2,
+				"pid":      "merchant-1",
+				"amount":   10,
+				"currency": "usdt",
+				"token":    "usdt",
+				"network":  "tron",
+				"trade_id": "T202605031234",
+			},
+		},
+		{
+			name: "valid actual amount",
+			payload: map[string]any{
+				"status":        2,
+				"actual_amount": "10.0",
+			},
+		},
+		{
+			name: "reject unpaid status",
+			payload: map[string]any{
+				"status": 1,
+				"amount": "10.00",
+			},
+			wantErr: true,
+		},
+		{
+			name: "reject mismatched amount",
+			payload: map[string]any{
+				"status": 2,
+				"amount": "9.99",
+			},
+			wantErr: true,
+		},
+		{
+			name: "ignore mismatched actual amount when order amount matches",
+			payload: map[string]any{
+				"status":        2,
+				"amount":        "10.00",
+				"actual_amount": "9.99",
+			},
+		},
+		{
+			name: "accept trc20 network alias",
+			payload: map[string]any{
+				"status":  2,
+				"amount":  "10.00",
+				"network": "TRC20",
+			},
+		},
+		{
+			name: "reject missing amount",
+			payload: map[string]any{
+				"status": 2,
+			},
+			wantErr: true,
+		},
+		{
+			name: "reject mismatched token",
+			payload: map[string]any{
+				"status": 2,
+				"amount": "10.00",
+				"token":  "trx",
+			},
+			wantErr: true,
+		},
+		{
+			name: "reject mismatched network",
+			payload: map[string]any{
+				"status":  2,
+				"amount":  "10.00",
+				"network": "bsc",
+			},
+			wantErr: true,
+		},
+		{
+			name: "reject mismatched trade id",
+			payload: map[string]any{
+				"status":   2,
+				"amount":   "10.00",
+				"trade_id": "T-other",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateEPUSDTPaidCallback(order, tt.payload, cfg)
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestDecimalStringEqual(t *testing.T) {
+	if !decimalStringEqual("10", "10.00") {
+		t.Fatalf("expected equivalent decimal strings")
+	}
+	if decimalStringEqual("10.01", "10.00") {
+		t.Fatalf("expected different decimal strings")
+	}
+	if decimalStringEqual("", "10.00") {
+		t.Fatalf("expected empty string to be invalid")
+	}
+}
+
 func md5Hex(value string) string {
 	sum := md5.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])
