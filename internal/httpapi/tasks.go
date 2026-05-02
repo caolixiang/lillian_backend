@@ -292,11 +292,11 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	task, ok := s.taskForWallet(w, r, chi.URLParam(r, "id"), wallet.ID)
+	task, ok := s.taskForWallet(w, r, chi.URLParam(r, "id"), wallet.Wallet.ID)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.publicTask(r, task))
+	writeJSON(w, http.StatusOK, s.publicTask(r, task, wallet))
 }
 
 func (s *Server) handleGetTaskImage(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +308,7 @@ func (s *Server) handleGetTaskImage(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusServiceUnavailable, "object store is not configured")
 		return
 	}
-	task, ok := s.taskForWallet(w, r, chi.URLParam(r, "id"), wallet.ID)
+	task, ok := s.taskForWallet(w, r, chi.URLParam(r, "id"), wallet.Wallet.ID)
 	if !ok {
 		return
 	}
@@ -342,9 +342,9 @@ func (s *Server) handleGetTaskImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, body)
 }
 
-func (s *Server) walletFromRequest(w http.ResponseWriter, r *http.Request) (walletRecord, bool) {
+func (s *Server) walletFromRequest(w http.ResponseWriter, r *http.Request) (walletSnapshot, bool) {
 	if !s.requireWalletStore(w) {
-		return walletRecord{}, false
+		return walletSnapshot{}, false
 	}
 	address := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("walletAddress")))
 	if address == "" {
@@ -352,20 +352,20 @@ func (s *Server) walletFromRequest(w http.ResponseWriter, r *http.Request) (wall
 	}
 	if !isWalletAddress(address) {
 		errorJSON(w, http.StatusBadRequest, "钱包地址格式无效")
-		return walletRecord{}, false
+		return walletSnapshot{}, false
 	}
 	ctx, cancel := contextWithTimeout(r, 5*time.Second)
 	defer cancel()
 	snapshot, err := s.wallets.WalletByAddress(ctx, address)
 	if errors.Is(err, errWalletNotFound) {
 		errorJSON(w, http.StatusNotFound, "钱包不存在")
-		return walletRecord{}, false
+		return walletSnapshot{}, false
 	}
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
-		return walletRecord{}, false
+		return walletSnapshot{}, false
 	}
-	return snapshot.Wallet, true
+	return snapshot, true
 }
 
 func (s *Server) taskForLicense(w http.ResponseWriter, r *http.Request, taskID, licenseKeyID string) (taskRow, bool) {
@@ -820,7 +820,11 @@ func (s *Server) callImageService(ctx context.Context, profile serviceProfileRow
 	return result, nil
 }
 
-func (s *Server) publicTask(r *http.Request, task taskRow) map[string]any {
+func publicTask(r *http.Request, task taskRow, wallet walletSnapshot) map[string]any {
+	return (&Server{}).publicTask(r, task, wallet)
+}
+
+func (s *Server) publicTask(r *http.Request, task taskRow, wallet walletSnapshot) map[string]any {
 	base := s.publicBaseURL(r)
 	outputs := decodeOutputs(task.OutputsJSON)
 	publicOutputs := make([]map[string]any, 0, len(outputs))
@@ -834,11 +838,18 @@ func (s *Server) publicTask(r *http.Request, task taskRow) map[string]any {
 			"contentType": output.ContentType,
 		})
 	}
-	return map[string]any{
+	walletAddress := wallet.Wallet.Address
+	if walletAddress == "" {
+		walletAddress = requestWalletAddress(r)
+	}
+	payload := map[string]any{
 		"id":             task.ID,
 		"status":         task.Status,
 		"walletId":       task.WalletID,
+		"walletAddress":  walletAddress,
 		"serviceCode":    task.ServiceCode,
+		"creditReserved": task.CreditReserved,
+		"creditCharged":  task.CreditCharged,
 		"error":          nullableString(task.Error),
 		"requestedSize":  task.RequestedSize,
 		"serviceProfile": task.ServiceProfile,
@@ -849,6 +860,10 @@ func (s *Server) publicTask(r *http.Request, task taskRow) map[string]any {
 		"actualParams":   jsonField(task.ActualParamsJSON),
 		"revisedPrompts": jsonField(task.RevisedPromptsJSON),
 	}
+	if isWalletAddress(wallet.Wallet.Address) {
+		payload["wallet"] = publicWallet(wallet)
+	}
+	return payload
 }
 
 func requestWalletAddress(r *http.Request) string {

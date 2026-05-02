@@ -12,7 +12,7 @@ This first backend scaffold includes:
 - Vite-built admin frontend embedded into the Go binary at `/admin`
 - Postgres connection plumbing
 - S3-compatible object storage client for R2, AWS S3, MinIO, Wasabi, Backblaze, and similar providers
-- Initial Postgres schema for licenses, activations, tasks, credit ledger, and service profiles
+- Postgres schema for wallet entitlements, licenses, activations, tasks, credit ledger, and service profiles
 - Lightweight Dockerfile, backend-only Docker Compose, and GitHub Actions build flow
 
 Implemented admin/runtime endpoints:
@@ -25,13 +25,28 @@ Implemented admin/runtime endpoints:
 - `GET /admin/service-profiles`
 - `POST /admin/service-profiles`
 - `DELETE /admin/service-profiles/:id`
+- `GET /admin/wallets/:address`
 - `GET /admin/runtime-settings`
 - `POST /admin/runtime-settings`
+- `POST /api/wallets/create`
+- `POST /api/wallets/restore`
+- `GET /api/wallets/:address`
+- `POST /api/wallets/redeem`
 - `POST /api/keys/activate`
 - `GET /api/me/credits`
 - `POST /api/tasks`
 - `GET /api/tasks/:id`
 - `GET /api/tasks/:id/images/:index`
+
+Frontend wallet flow:
+
+- `POST /api/wallets/create` returns `{ wallet, recoveryCode }`. Store `wallet.address` in the browser workspace and show `recoveryCode` once.
+- `POST /api/wallets/restore` accepts `{ "recoveryCode": "LIL-WAL-..." }` and returns `{ wallet }`.
+- `GET /api/wallets/:address` returns `{ wallet }` for balance refresh before/after generation.
+- `POST /api/wallets/redeem` accepts `{ "walletAddress": "0x...", "code": "LIL-..." }` and returns `{ wallet }`.
+- `POST /api/tasks` accepts `walletAddress` either as a top-level field or inside `params`. The accepted response includes `wallet`, `serviceCode`, and `remainingCredits`.
+- `GET /api/tasks/:id?walletAddress=0x...` returns task status plus `walletAddress`, `wallet`, `serviceCode`, `creditReserved`, and `creditCharged` so the SPA can refresh local wallet state without a second balance call.
+- `GET /api/tasks/:id/images/:index?walletAddress=0x...` requires the same wallet address for private image access.
 
 ## Environment
 
