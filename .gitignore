@@ -12,3 +12,4 @@ web/admin/node_modules/
 web/admin/tsconfig.tsbuildinfo
 internal/httpapi/admin_dist/*
 !internal/httpapi/admin_dist/placeholder.txt
+.codex/
