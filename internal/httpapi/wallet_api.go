@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base32"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,14 +23,18 @@ const (
 )
 
 var (
-	errWalletNotFound = errors.New("wallet not found")
-	walletAddressRE   = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
+	errWalletNotFound        = errors.New("wallet not found")
+	errWalletLicenseNotFound = errors.New("wallet license not found")
+	errWalletLicenseExpired  = errors.New("wallet license expired")
+	errWalletLicenseRedeemed = errors.New("wallet license redeemed")
+	walletAddressRE          = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
 )
 
 type walletStore interface {
 	CreateWallet(ctx context.Context, params createWalletParams) (walletSnapshot, error)
 	WalletByRecoveryHash(ctx context.Context, recoveryHash string) (walletSnapshot, error)
 	WalletByAddress(ctx context.Context, address string) (walletSnapshot, error)
+	RedeemLicenseToWallet(ctx context.Context, params redeemWalletParams) (walletSnapshot, error)
 }
 
 type createWalletParams struct {
@@ -52,6 +58,23 @@ type walletEntitlement struct {
 	Label         string
 	Remaining     int
 	MaxConcurrent int
+}
+
+type walletLicense struct {
+	ID               string
+	ServiceCode      string
+	Credits          int
+	MaxConcurrent    int
+	Status           string
+	ExpiresAt        sql.NullTime
+	Redeemed         bool
+	RedeemedWalletID string
+}
+
+type redeemWalletParams struct {
+	WalletAddress string
+	CodeHash      string
+	Now           time.Time
 }
 
 type walletSnapshot struct {
@@ -118,6 +141,75 @@ func (s postgresWalletStore) WalletByAddress(ctx context.Context, address string
 	return s.snapshot(ctx, wallet)
 }
 
+func (s postgresWalletStore) RedeemLicenseToWallet(ctx context.Context, params redeemWalletParams) (walletSnapshot, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return walletSnapshot{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	wallet, err := walletByAddressForUpdate(ctx, tx, params.WalletAddress)
+	if err != nil {
+		return walletSnapshot{}, err
+	}
+	license, err := licenseByHashForWalletRedeem(ctx, tx, params.CodeHash)
+	if err != nil {
+		return walletSnapshot{}, err
+	}
+	if license.ExpiresAt.Valid && !license.ExpiresAt.Time.After(params.Now) {
+		return walletSnapshot{}, errWalletLicenseExpired
+	}
+	if license.Redeemed {
+		return walletSnapshot{}, errWalletLicenseRedeemed
+	}
+	if license.Credits <= 0 {
+		return walletSnapshot{}, errWalletLicenseNotFound
+	}
+	if license.MaxConcurrent <= 0 {
+		license.MaxConcurrent = defaultMaxConcurrent
+	}
+
+	entitlementID, err := randomUUID()
+	if err != nil {
+		return walletSnapshot{}, err
+	}
+	redemptionID, err := randomUUID()
+	if err != nil {
+		return walletSnapshot{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO wallet_entitlements (
+			id, wallet_id, service_code, remaining, max_concurrent, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (wallet_id, service_code) DO UPDATE SET
+			remaining = wallet_entitlements.remaining + excluded.remaining,
+			max_concurrent = GREATEST(wallet_entitlements.max_concurrent, excluded.max_concurrent),
+			updated_at = excluded.updated_at
+	`, entitlementID, wallet.ID, license.ServiceCode, license.Credits, license.MaxConcurrent, params.Now, params.Now); err != nil {
+		return walletSnapshot{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE license_keys
+		SET redeemed_at = $1,
+			redeemed_wallet_id = $2,
+			updated_at = $3
+		WHERE id = $4
+	`, params.Now, wallet.ID, params.Now, license.ID); err != nil {
+		return walletSnapshot{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO wallet_redemptions (
+			id, wallet_id, license_key_id, service_code, credits_added, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6)
+	`, redemptionID, wallet.ID, license.ID, license.ServiceCode, license.Credits, params.Now); err != nil {
+		return walletSnapshot{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return walletSnapshot{}, err
+	}
+	return s.WalletByAddress(ctx, wallet.Address)
+}
+
 func (s postgresWalletStore) snapshot(ctx context.Context, wallet walletRecord) (walletSnapshot, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT service_code, remaining, max_concurrent
@@ -143,6 +235,61 @@ func (s postgresWalletStore) snapshot(ctx context.Context, wallet walletRecord) 
 		return walletSnapshot{}, err
 	}
 	return walletSnapshot{Wallet: wallet, Entitlements: entitlements}, nil
+}
+
+type pgxTx interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func walletByAddressForUpdate(ctx context.Context, tx pgxTx, address string) (walletRecord, error) {
+	var wallet walletRecord
+	err := tx.QueryRow(ctx, `
+		SELECT id, address, recovery_hash, created_at, updated_at
+		FROM wallets
+		WHERE address = $1
+		FOR UPDATE
+	`, strings.ToLower(strings.TrimSpace(address))).Scan(&wallet.ID, &wallet.Address, &wallet.RecoveryHash, &wallet.CreatedAt, &wallet.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return walletRecord{}, errWalletNotFound
+	}
+	return wallet, err
+}
+
+func licenseByHashForWalletRedeem(ctx context.Context, tx pgxTx, codeHash string) (walletLicense, error) {
+	var license walletLicense
+	var redeemedAt sql.NullTime
+	var redeemedWalletID sql.NullString
+	err := tx.QueryRow(ctx, `
+		SELECT id, service_code, credits, max_concurrent, status, expires_at, redeemed_at, redeemed_wallet_id
+		FROM license_keys
+		WHERE key_hash = $1
+			AND status = 'active'
+		FOR UPDATE
+	`, codeHash).Scan(
+		&license.ID,
+		&license.ServiceCode,
+		&license.Credits,
+		&license.MaxConcurrent,
+		&license.Status,
+		&license.ExpiresAt,
+		&redeemedAt,
+		&redeemedWalletID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return walletLicense{}, errWalletLicenseNotFound
+	}
+	if err != nil {
+		return walletLicense{}, err
+	}
+	license.Redeemed = redeemedAt.Valid || redeemedWalletID.Valid
+	if redeemedWalletID.Valid {
+		license.RedeemedWalletID = redeemedWalletID.String
+	}
+	if license.ServiceCode == "" {
+		license.ServiceCode = serviceCodeFromTier("")
+	}
+	return license, nil
 }
 
 func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +338,55 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		"wallet":       publicWallet(snapshot),
 		"recoveryCode": recoveryCode,
 	})
+}
+
+func (s *Server) handleRedeemWallet(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWalletStore(w) {
+		return
+	}
+	var body struct {
+		WalletAddress string `json:"walletAddress"`
+		Code          string `json:"code"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	walletAddress := strings.ToLower(strings.TrimSpace(body.WalletAddress))
+	code := strings.TrimSpace(body.Code)
+	if !isWalletAddress(walletAddress) {
+		errorJSON(w, http.StatusBadRequest, "钱包地址格式无效")
+		return
+	}
+	if code == "" {
+		errorJSON(w, http.StatusBadRequest, "请输入兑换码")
+		return
+	}
+
+	ctx, cancel := contextWithTimeout(r, 10*time.Second)
+	defer cancel()
+	snapshot, err := s.wallets.RedeemLicenseToWallet(ctx, redeemWalletParams{
+		WalletAddress: walletAddress,
+		CodeHash:      s.hashSecret(code),
+		Now:           time.Now().UTC(),
+	})
+	switch {
+	case errors.Is(err, errWalletNotFound):
+		errorJSON(w, http.StatusNotFound, "钱包不存在")
+		return
+	case errors.Is(err, errWalletLicenseNotFound):
+		errorJSON(w, http.StatusNotFound, "兑换码无效或已失效")
+		return
+	case errors.Is(err, errWalletLicenseExpired):
+		errorJSON(w, http.StatusGone, "兑换码已过期")
+		return
+	case errors.Is(err, errWalletLicenseRedeemed):
+		errorJSON(w, http.StatusConflict, "兑换码已被使用")
+		return
+	case err != nil:
+		errorJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"wallet": publicWallet(snapshot)})
 }
 
 func (s *Server) handleRestoreWallet(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +505,13 @@ func serviceLabel(serviceCode string) string {
 	default:
 		return serviceCode
 	}
+}
+
+func serviceCodeFromTier(tier string) string {
+	if strings.EqualFold(strings.TrimSpace(tier), "hd") {
+		return serviceCodeImage2HD
+	}
+	return serviceCodeImage2SD
 }
 
 func base32NoPadding(bytes []byte) string {

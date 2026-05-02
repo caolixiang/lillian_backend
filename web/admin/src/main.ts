@@ -7,11 +7,16 @@ interface LicenseRecord {
   id: string
   key?: string
   tier: string
+  serviceCode?: string
   total_credits: number
   remaining_credits: number
+  credits?: number
   max_concurrent: number
   status?: string
   expires_at?: string | null
+  redeemed_at?: string | null
+  redeemedWalletAddress?: string | null
+  redeemedWalletId?: string | null
   note?: string
 }
 
@@ -40,7 +45,9 @@ interface CreateLicenseResponse {
     id: string
     key: string
     tier: string
+    serviceCode?: string
     totalCredits: number
+    credits?: number
     maxConcurrent: number
     note?: string
   }>
@@ -148,7 +155,7 @@ app.innerHTML = `
           <div class="body">
             <form id="licenseForm" class="form">
               <div class="columns">
-                <label>类型<select name="tier"><option value="basic">普通 1K</option><option value="hd">高清 2K/4K</option></select></label>
+                <label>服务<select name="serviceCode"><option value="image-2-sd">标清 image-2-sd</option><option value="image-2-hd">HD image-2-hd</option></select></label>
                 <label>数量<input name="count" type="number" min="1" max="100" value="1"></label>
               </div>
               <div class="columns">
@@ -195,7 +202,7 @@ app.innerHTML = `
             </form>
             <div class="table-wrap">
               <table>
-                <thead><tr><th class="select-cell"><input id="selectAllLicenses" type="checkbox" aria-label="全选兑换码"></th><th>兑换码</th><th>类型</th><th>剩余/总数</th><th>并发</th><th>可用</th><th>备注 / 发放对象</th><th>操作</th></tr></thead>
+                <thead><tr><th class="select-cell"><input id="selectAllLicenses" type="checkbox" aria-label="全选兑换码"></th><th>兑换码</th><th>服务</th><th>次数</th><th>并发</th><th>状态</th><th>兑换钱包</th><th>备注 / 发放对象</th><th>操作</th></tr></thead>
                 <tbody id="licensesTable"></tbody>
               </table>
             </div>
@@ -430,6 +437,7 @@ function availabilityStatus(license: LicenseRecord): string {
   let label = '可用'
   if (license.status && license.status !== 'active') label = '不可用'
   else if (isExpired(license.expires_at)) label = '已过期'
+  else if (license.redeemed_at || license.redeemedWalletAddress || license.redeemedWalletId) label = '已兑换'
   else if (license.remaining_credits <= 0) label = '已用完'
   const available = label === '可用'
   return `<span class="icon-status ${available ? 'ok' : 'bad'}" title="${h(label)}" aria-label="${h(label)}">${available ? '✓' : '×'}</span>`
@@ -441,7 +449,7 @@ function renderCreatedKeys(): void {
   els.createdKeys.innerHTML = state.createdKeys
     .map(
       (item) =>
-        `<div class="created-item"><div class="created-item-row"><code>${h(item.key)}</code><button class="small" type="button" data-copy-created="${h(item.key)}">复制</button></div><div class="hint">${h(item.tier)} · ${h(item.totalCredits)} 次${item.note ? ` · ${h(item.note)}` : ''}</div></div>`,
+        `<div class="created-item"><div class="created-item-row"><code>${h(item.key)}</code><button class="small" type="button" data-copy-created="${h(item.key)}">复制</button></div><div class="hint">${h(serviceLabel(item.serviceCode || item.tier))} · ${h(item.credits || item.totalCredits)} 次${item.note ? ` · ${h(item.note)}` : ''}</div></div>`,
     )
     .join('')
 }
@@ -453,6 +461,7 @@ function renderLicenses(): void {
         const key = license.key || ''
         const checked = state.selectedLicenseIds.includes(license.id) ? ' checked' : ''
         const note = license.note || ''
+        const redeemedWallet = license.redeemedWalletAddress || license.redeemedWalletId || ''
         const editingNote = state.editingLicenseNoteId === license.id
         const noteHtml = editingNote
           ? `<div class="note-edit"><input data-license-note-input="${h(license.id)}" value="${h(note)}" placeholder="备注 / 发放对象"><div class="note-edit-actions"><button class="small primary" type="button" data-save-license-note="${h(license.id)}">确定</button><button class="small" type="button" data-cancel-license-note="${h(license.id)}">取消</button></div></div>`
@@ -461,9 +470,9 @@ function renderLicenses(): void {
           key
             ? `<code>${h(key)}</code><button class="small" type="button" data-copy-license="${h(key)}">复制</button>`
             : '<span class="pill warn">旧数据不可查看</span>'
-        }</div></td><td>${h(license.tier)}</td><td>${h(license.remaining_credits)} / ${h(license.total_credits)}</td><td>${h(license.max_concurrent)}</td><td>${availabilityStatus(license)}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
+        }</div></td><td>${h(serviceLabel(license.serviceCode || license.tier))}</td><td>${h(license.credits || license.total_credits)}</td><td>${h(license.max_concurrent)}</td><td>${availabilityStatus(license)}</td><td>${redeemedWallet ? `<code>${h(redeemedWallet)}</code>` : '<span class="pill">未兑换</span>'}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
       })
-      .join('') || '<tr><td colspan="8">暂无兑换码</td></tr>'
+      .join('') || '<tr><td colspan="9">暂无兑换码</td></tr>'
 
   const selectedCount = state.selectedLicenseIds.length
   els.deleteSelectedLicenses.disabled = selectedCount === 0
@@ -742,7 +751,7 @@ function bindEvents(): void {
     message(els.licenseMessage, '正在生成...')
     try {
       const payload = {
-        tier: formValue(els.licenseForm, 'tier'),
+        serviceCode: formValue(els.licenseForm, 'serviceCode'),
         count: Number(formValue(els.licenseForm, 'count') || 1),
         totalCredits: Number(formValue(els.licenseForm, 'totalCredits') || 5),
         maxConcurrent: Number(formValue(els.licenseForm, 'maxConcurrent') || 6),
@@ -820,6 +829,11 @@ function bindEvents(): void {
   document.addEventListener('click', (event) => {
     void handleDocumentClick(event)
   })
+}
+
+function serviceLabel(value: string): string {
+  if (value === 'image-2-hd' || value === 'hd') return 'HD 2K/4K'
+  return '标清 1K'
 }
 
 async function handleDocumentClick(event: MouseEvent): Promise<void> {

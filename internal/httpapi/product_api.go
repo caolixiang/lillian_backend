@@ -41,11 +41,16 @@ type licenseRow struct {
 	ID               string
 	KeyCiphertext    sql.NullString
 	Tier             string
+	ServiceCode      string
 	TotalCredits     int
 	RemainingCredits int
+	Credits          int
 	MaxConcurrent    int
 	Status           string
 	ExpiresAt        sql.NullTime
+	RedeemedAt       sql.NullTime
+	RedeemedWalletID sql.NullString
+	RedeemedAddress  sql.NullString
 	Note             string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
@@ -182,6 +187,7 @@ func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Reques
 		ExpiresAt     string `json:"expiresAt"`
 		ExpiresInDays int    `json:"expiresInDays"`
 		Note          string `json:"note"`
+		ServiceCode   string `json:"serviceCode"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -192,6 +198,7 @@ func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Reques
 	if tier == "" {
 		tier = "basic"
 	}
+	serviceCode := normalizeServiceCode(firstNonEmpty(body.ServiceCode, serviceCodeFromTier(tier)))
 	totalCredits := positiveOr(body.TotalCredits, defaultLicenseCredits)
 	maxConcurrent := positiveOr(body.MaxConcurrent, defaultMaxConcurrent)
 	expiresAt, err := parseExpiresAt(body.ExpiresAt, body.ExpiresInDays)
@@ -225,9 +232,9 @@ func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Reques
 		_, err = s.db.Exec(ctx, `
 			INSERT INTO license_keys (
 				id, key_hash, key_ciphertext, tier, total_credits, remaining_credits,
-				max_concurrent, status, expires_at, note, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9, $10, $11)
-		`, id, s.hashSecret(key), keyCiphertext, tier, totalCredits, totalCredits, maxConcurrent, expiresAt, note, now, now)
+				service_code, credits, max_concurrent, status, expires_at, note, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $11, $12, $13)
+		`, id, s.hashSecret(key), keyCiphertext, tier, totalCredits, totalCredits, serviceCode, totalCredits, maxConcurrent, expiresAt, note, now, now)
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, err.Error())
 			return
@@ -236,7 +243,9 @@ func (s *Server) handleAdminCreateLicenses(w http.ResponseWriter, r *http.Reques
 			"id":            id,
 			"key":           key,
 			"tier":          tier,
+			"serviceCode":   serviceCode,
 			"totalCredits":  totalCredits,
+			"credits":       totalCredits,
 			"maxConcurrent": maxConcurrent,
 			"note":          note,
 		})
@@ -264,20 +273,24 @@ func (s *Server) handleAdminListLicenses(w http.ResponseWriter, r *http.Request)
 	var err error
 	if search != "" {
 		rows, err = s.db.Query(ctx, `
-			SELECT id, key_ciphertext, tier, total_credits, remaining_credits, max_concurrent,
-				status, expires_at, note, created_at, updated_at
-			FROM license_keys
-			WHERE status <> 'deleted' AND key_hash = $1
-			ORDER BY created_at DESC
+			SELECT l.id, l.key_ciphertext, l.tier, l.service_code, l.total_credits, l.remaining_credits,
+				l.credits, l.max_concurrent, l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
+				w.address, l.note, l.created_at, l.updated_at
+			FROM license_keys l
+			LEFT JOIN wallets w ON w.id = l.redeemed_wallet_id
+			WHERE l.status <> 'deleted' AND l.key_hash = $1
+			ORDER BY l.created_at DESC
 			LIMIT $2 OFFSET $3
 		`, s.hashSecret(search), queryLimit, offset)
 	} else {
 		rows, err = s.db.Query(ctx, `
-			SELECT id, key_ciphertext, tier, total_credits, remaining_credits, max_concurrent,
-				status, expires_at, note, created_at, updated_at
-			FROM license_keys
-			WHERE status <> 'deleted'
-			ORDER BY created_at DESC
+			SELECT l.id, l.key_ciphertext, l.tier, l.service_code, l.total_credits, l.remaining_credits,
+				l.credits, l.max_concurrent, l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
+				w.address, l.note, l.created_at, l.updated_at
+			FROM license_keys l
+			LEFT JOIN wallets w ON w.id = l.redeemed_wallet_id
+			WHERE l.status <> 'deleted'
+			ORDER BY l.created_at DESC
 			LIMIT $1 OFFSET $2
 		`, queryLimit, offset)
 	}
@@ -677,8 +690,9 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 func (s *Server) licenseByHash(ctx context.Context, keyHash string) (licenseRow, error) {
 	var license licenseRow
 	err := s.db.QueryRow(ctx, `
-		SELECT id, key_ciphertext, tier, total_credits, remaining_credits, max_concurrent,
-			status, expires_at, note, created_at, updated_at
+		SELECT id, key_ciphertext, tier, service_code, total_credits, remaining_credits,
+			credits, max_concurrent, status, expires_at, redeemed_at, redeemed_wallet_id,
+			NULL::text AS redeemed_wallet_address, note, created_at, updated_at
 		FROM license_keys
 		WHERE key_hash = $1
 			AND status = 'active'
@@ -687,11 +701,16 @@ func (s *Server) licenseByHash(ctx context.Context, keyHash string) (licenseRow,
 		&license.ID,
 		&license.KeyCiphertext,
 		&license.Tier,
+		&license.ServiceCode,
 		&license.TotalCredits,
 		&license.RemainingCredits,
+		&license.Credits,
 		&license.MaxConcurrent,
 		&license.Status,
 		&license.ExpiresAt,
+		&license.RedeemedAt,
+		&license.RedeemedWalletID,
+		&license.RedeemedAddress,
 		&license.Note,
 		&license.CreatedAt,
 		&license.UpdatedAt,
@@ -724,11 +743,16 @@ func scanLicense(row scanner) (licenseRow, error) {
 		&license.ID,
 		&license.KeyCiphertext,
 		&license.Tier,
+		&license.ServiceCode,
 		&license.TotalCredits,
 		&license.RemainingCredits,
+		&license.Credits,
 		&license.MaxConcurrent,
 		&license.Status,
 		&license.ExpiresAt,
+		&license.RedeemedAt,
+		&license.RedeemedWalletID,
+		&license.RedeemedAddress,
 		&license.Note,
 		&license.CreatedAt,
 		&license.UpdatedAt,
@@ -770,17 +794,22 @@ func (s *Server) publicLicense(license licenseRow) map[string]any {
 		}
 	}
 	return map[string]any{
-		"id":                license.ID,
-		"key":               key,
-		"tier":              license.Tier,
-		"total_credits":     license.TotalCredits,
-		"remaining_credits": license.RemainingCredits,
-		"max_concurrent":    license.MaxConcurrent,
-		"status":            license.Status,
-		"expires_at":        nullableTime(license.ExpiresAt),
-		"note":              license.Note,
-		"created_at":        license.CreatedAt.UTC().Format(time.RFC3339Nano),
-		"updated_at":        license.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"id":                    license.ID,
+		"key":                   key,
+		"tier":                  license.Tier,
+		"serviceCode":           normalizeServiceCode(firstNonEmpty(license.ServiceCode, serviceCodeFromTier(license.Tier))),
+		"total_credits":         license.TotalCredits,
+		"remaining_credits":     license.RemainingCredits,
+		"credits":               positiveOr(license.Credits, license.TotalCredits),
+		"max_concurrent":        license.MaxConcurrent,
+		"status":                license.Status,
+		"expires_at":            nullableTime(license.ExpiresAt),
+		"redeemed_at":           nullableTime(license.RedeemedAt),
+		"redeemedWalletId":      nullableString(license.RedeemedWalletID),
+		"redeemedWalletAddress": nullableString(license.RedeemedAddress),
+		"note":                  license.Note,
+		"created_at":            license.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at":            license.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 
@@ -831,6 +860,9 @@ func bearerToken(r *http.Request) string {
 }
 
 func (s *Server) hashSecret(value string) string {
+	if s.hashSecretFunc != nil {
+		return s.hashSecretFunc(value)
+	}
 	sum := sha256.Sum256([]byte(s.cfg.LicenseKeyPepper + ":" + strings.TrimSpace(value)))
 	return hex.EncodeToString(sum[:])
 }
@@ -1014,6 +1046,15 @@ func normalizeTierBucket(value string) string {
 		return "hd"
 	}
 	return "1k"
+}
+
+func normalizeServiceCode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case serviceCodeImage2HD:
+		return serviceCodeImage2HD
+	default:
+		return serviceCodeImage2SD
+	}
 }
 
 func normalizeAPIMode(value string) string {

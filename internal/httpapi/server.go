@@ -20,6 +20,7 @@ type Server struct {
 	store          storage.ObjectStore
 	logger         *log.Logger
 	upstreamClient *http.Client
+	hashSecretFunc func(string) string
 }
 
 func New(cfg config.Config, db *pgxpool.Pool, store storage.ObjectStore, logger *log.Logger) *Server {
@@ -58,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/api/me/credits", s.handleCredits)
 	r.Post("/api/wallets/create", s.handleCreateWallet)
 	r.Post("/api/wallets/restore", s.handleRestoreWallet)
+	r.Post("/api/wallets/redeem", s.handleRedeemWallet)
 	r.Get("/api/wallets/{address}", s.handleGetWallet)
 	r.Post("/api/tasks", s.handleCreateTask)
 	r.Get("/api/tasks/{id}", s.handleGetTask)
