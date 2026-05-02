@@ -33,8 +33,14 @@ func TestLicenseWalletRedemptionMigrationAddsServiceAndRedeemColumns(t *testing.
 		"ADD COLUMN IF NOT EXISTS credits INTEGER",
 		"ADD COLUMN IF NOT EXISTS redeemed_at TIMESTAMPTZ",
 		"ADD COLUMN IF NOT EXISTS redeemed_wallet_id TEXT",
+		"SET service_code = CASE WHEN tier = 'hd' THEN 'image-2-hd' ELSE 'image-2-sd' END",
+		"SET service_code = 'image-2-sd'",
+		"SET credits = total_credits",
+		"SET credits = 5",
 		"ADD CONSTRAINT license_keys_redeemed_wallet_id_fkey",
 		"FOREIGN KEY (redeemed_wallet_id) REFERENCES wallets(id) ON DELETE SET NULL",
+		"ALTER COLUMN service_code SET NOT NULL",
+		"ALTER COLUMN credits SET NOT NULL",
 		"idx_license_keys_redeemed_wallet",
 	} {
 		if !strings.Contains(sql, want) {

@@ -1,6 +1,6 @@
 ALTER TABLE license_keys
-  ADD COLUMN IF NOT EXISTS service_code TEXT NOT NULL DEFAULT 'image-2-sd',
-  ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 5,
+  ADD COLUMN IF NOT EXISTS service_code TEXT,
+  ADD COLUMN IF NOT EXISTS credits INTEGER,
   ADD COLUMN IF NOT EXISTS redeemed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS redeemed_wallet_id TEXT;
 
@@ -25,6 +25,14 @@ BEGIN
     SET credits = total_credits
     WHERE credits IS NULL OR credits <= 0;
   END IF;
+
+  UPDATE license_keys
+  SET service_code = 'image-2-sd'
+  WHERE service_code IS NULL OR service_code = '';
+
+  UPDATE license_keys
+  SET credits = 5
+  WHERE credits IS NULL OR credits <= 0;
 END $$;
 
 DO $$
