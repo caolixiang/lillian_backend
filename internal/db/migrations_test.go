@@ -117,6 +117,25 @@ func TestRemoveActivationTokenFlowMigrationDropsLegacyTablesAndColumns(t *testin
 	}
 }
 
+func TestWalletCreditsPaymentMigrationsDefineGenericPricingAndTopups(t *testing.T) {
+	sql := readMigration(t, "0009_wallet_credits_payments.sql") + "\n" + readMigration(t, "0010_credit_pricing_and_topup.sql")
+	for _, want := range []string{
+		"ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 0",
+		"ADD COLUMN IF NOT EXISTS credit_units INTEGER NOT NULL DEFAULT 1",
+		"ADD COLUMN IF NOT EXISTS billing_source TEXT NOT NULL DEFAULT 'entitlement'",
+		"CREATE TABLE IF NOT EXISTS payment_orders",
+		"CREATE TABLE IF NOT EXISTS service_credit_prices",
+		"UNIQUE (service_code, billing_key)",
+		"CREATE TABLE IF NOT EXISTS credit_topup_plans",
+		"('service-credit-image-2-hd-4k', 'image-2-hd', '4K', 2",
+		"('topup-usdt-10-credits-200', '10 USDT = 200 credits', 10, 200",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))

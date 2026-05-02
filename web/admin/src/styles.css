@@ -285,7 +285,9 @@ section {
 }
 
 .settings-view {
-  max-width: 520px;
+  max-width: 960px;
+  display: grid;
+  gap: 16px;
 }
 
 .grid {
@@ -333,6 +335,20 @@ section {
 .table-wrap {
   width: 100%;
   overflow: auto;
+}
+
+.compact-table table {
+  min-width: 680px;
+}
+
+.compact-form {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.billing-settings {
+  display: grid;
+  gap: 14px;
 }
 
 .list-toolbar {

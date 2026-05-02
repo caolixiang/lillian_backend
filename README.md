@@ -32,6 +32,8 @@ Implemented admin/runtime endpoints:
 - `POST /api/wallets/restore`
 - `GET /api/wallets/:address`
 - `POST /api/wallets/redeem`
+- `POST /api/wallets/:address/topups`
+- `POST /api/payments/epusdt/callback`
 - `POST /api/tasks`
 - `GET /api/tasks/:id`
 - `GET /api/tasks/:id/images/:index`
@@ -42,6 +44,7 @@ Frontend wallet flow:
 - `POST /api/wallets/restore` accepts `{ "recoveryCode": "LIL-WAL-..." }` and returns `{ wallet }`.
 - `GET /api/wallets/:address` returns `{ wallet }` for balance refresh before/after generation.
 - `POST /api/wallets/redeem` accepts `{ "walletAddress": "0x...", "code": "LIL-..." }` and returns `{ wallet }`.
+- `POST /api/wallets/:address/topups` creates an EPUSDT/GMPay recharge order from the default enabled top-up plan and returns `{ checkoutUrl, order, wallet }`.
 - `POST /api/tasks` accepts `walletAddress` either as a top-level field or inside `params`. The accepted response includes `wallet`, `serviceCode`, and `remainingCredits`.
 - `GET /api/tasks/:id?walletAddress=0x...` returns task status plus `walletAddress`, `wallet`, `serviceCode`, `creditReserved`, and `creditCharged` so the SPA can refresh local wallet state without a second balance call.
 - `GET /api/tasks/:id/images/:index?walletAddress=0x...` requires the same wallet address for private image access.
@@ -59,6 +62,8 @@ Frontend wallet flow:
 - `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` - S3 credentials
 - `S3_PUBLIC_BASE_URL` - public image base URL, usually a custom domain or public bucket URL
 - `S3_FORCE_PATH_STYLE` - set `true` for MinIO and many S3-compatible providers
+- `EPUSDT_BASE_URL` / `EPUSDT_PID` / `EPUSDT_SECRET_KEY` - EPUSDT/GMPay endpoint and merchant credentials for credits recharge
+- `EPUSDT_CURRENCY` / `EPUSDT_TOKEN` / `EPUSDT_NETWORK` - EPUSDT asset settings, default to `USDT` / `USDT` / `TRON`
 
 Optional deployment overrides:
 
@@ -75,6 +80,11 @@ Runtime image settings are stored in Postgres and edited from `/admin`, not in `
 - Global image concurrency: total number of upstream synchronous image tasks allowed to run at once.
 - Default provider concurrency: per-provider limit when the provider does not override it.
 - Upstream timeout seconds: timeout for one synchronous generation call plus image retrieval.
+
+Credits pricing and recharge plans are also stored in Postgres and edited from `/admin`. Credits are a generic wallet balance, not an image-only counter:
+
+- `service_credit_prices`: generic service pricing by `service_code + billing_key`. Image generation uses `image-2-sd/image-2-hd + 1K/2K/4K` as the first seeded service keys; future services can add their own `service_code` and billing keys without changing the wallet balance model.
+- `credit_topup_plans`: recharge packages, seeded with `10 USDT = 200 credits`.
 
 `TASK_WORKER_CONCURRENCY` only controls how many backend workers can look for work. Workers do not hold a database transaction while waiting for upstream image generation, and actual upstream generation concurrency is still capped by the `/admin` runtime settings and provider/license limits. Keep `DB_POOL_MAX_CONNS` comfortably above expected active DB bursts from workers and API requests, but below the Railway Postgres connection limit.
 

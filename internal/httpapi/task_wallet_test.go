@@ -58,6 +58,33 @@ func TestSelectWalletServiceForGenerationRequiresHDFor2KAnd4K(t *testing.T) {
 	}
 }
 
+func TestCreditBillingForImageGenerationUsesConfiguredPrices(t *testing.T) {
+	server := &Server{
+		db: nil,
+	}
+	if got := billingKeyForImageGeneration("4K"); got != "4K" {
+		t.Fatalf("billing key = %q", got)
+	}
+	if got := creditServiceCandidatesForImageGeneration("1K"); len(got) != 2 || got[0] != serviceCodeImage2SD || got[1] != serviceCodeImage2HD {
+		t.Fatalf("1K candidates = %#v", got)
+	}
+	if _, err := server.creditBillingForImageGeneration(context.Background(), 10, "4K"); err == nil {
+		t.Fatalf("expected missing DB pricing to fail")
+	}
+}
+
+func TestCandidateBucketsAllow1KGenerationOnHDProvider(t *testing.T) {
+	for _, serviceCode := range []string{serviceCodeImage2SD, serviceCodeImage2HD} {
+		buckets, err := candidateBucketsForService(serviceCode, "1K")
+		if err != nil {
+			t.Fatalf("candidate buckets for %s: %v", serviceCode, err)
+		}
+		if len(buckets) != 2 || buckets[0] != "1k" || buckets[1] != "hd" {
+			t.Fatalf("candidate buckets for %s = %#v", serviceCode, buckets)
+		}
+	}
+}
+
 func TestPublicTaskIncludesWalletSnapshotForFrontendRefresh(t *testing.T) {
 	address := "0x4444444444444444444444444444444444444444"
 	req := httptest.NewRequest("GET", "/api/tasks/task-1?walletAddress="+address, nil)
@@ -189,11 +216,13 @@ func (r *singleTaskRows) Next() bool {
 }
 
 func (r *singleTaskRows) Scan(dest ...any) error {
-	values := []any{r.walletID, r.serviceCode}
+	values := []any{r.walletID, r.serviceCode, billingSourceEntitlement, 1}
 	for i := range dest {
 		switch target := dest[i].(type) {
 		case *string:
 			*target = values[i].(string)
+		case *int:
+			*target = values[i].(int)
 		}
 	}
 	return nil

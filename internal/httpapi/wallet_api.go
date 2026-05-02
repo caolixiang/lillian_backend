@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	serviceCodeImage2SD = "image-2-sd"
-	serviceCodeImage2HD = "image-2-hd"
+	serviceCodeImage2SD      = "image-2-sd"
+	serviceCodeImage2HD      = "image-2-hd"
+	billingSourceEntitlement = "entitlement"
+	billingSourceCredits     = "credits"
 )
 
 var (
@@ -49,6 +51,7 @@ type walletRecord struct {
 	ID           string
 	Address      string
 	RecoveryHash string
+	Credits      int
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -84,6 +87,7 @@ type walletSnapshot struct {
 
 type walletResponse struct {
 	Address      string                      `json:"address"`
+	Credits      int                         `json:"credits"`
 	Entitlements []walletEntitlementResponse `json:"entitlements"`
 }
 
@@ -112,10 +116,10 @@ func (s postgresWalletStore) CreateWallet(ctx context.Context, params createWall
 func (s postgresWalletStore) WalletByRecoveryHash(ctx context.Context, recoveryHash string) (walletSnapshot, error) {
 	var wallet walletRecord
 	err := s.db.QueryRow(ctx, `
-		SELECT id, address, recovery_hash, created_at, updated_at
+		SELECT id, address, recovery_hash, credits, created_at, updated_at
 		FROM wallets
 		WHERE recovery_hash = $1
-	`, recoveryHash).Scan(&wallet.ID, &wallet.Address, &wallet.RecoveryHash, &wallet.CreatedAt, &wallet.UpdatedAt)
+	`, recoveryHash).Scan(&wallet.ID, &wallet.Address, &wallet.RecoveryHash, &wallet.Credits, &wallet.CreatedAt, &wallet.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return walletSnapshot{}, errWalletNotFound
 	}
@@ -128,10 +132,10 @@ func (s postgresWalletStore) WalletByRecoveryHash(ctx context.Context, recoveryH
 func (s postgresWalletStore) WalletByAddress(ctx context.Context, address string) (walletSnapshot, error) {
 	var wallet walletRecord
 	err := s.db.QueryRow(ctx, `
-		SELECT id, address, recovery_hash, created_at, updated_at
+		SELECT id, address, recovery_hash, credits, created_at, updated_at
 		FROM wallets
 		WHERE address = $1
-	`, strings.ToLower(strings.TrimSpace(address))).Scan(&wallet.ID, &wallet.Address, &wallet.RecoveryHash, &wallet.CreatedAt, &wallet.UpdatedAt)
+	`, strings.ToLower(strings.TrimSpace(address))).Scan(&wallet.ID, &wallet.Address, &wallet.RecoveryHash, &wallet.Credits, &wallet.CreatedAt, &wallet.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return walletSnapshot{}, errWalletNotFound
 	}
@@ -245,11 +249,11 @@ type pgxTx interface {
 func walletByAddressForUpdate(ctx context.Context, tx pgxTx, address string) (walletRecord, error) {
 	var wallet walletRecord
 	err := tx.QueryRow(ctx, `
-		SELECT id, address, recovery_hash, created_at, updated_at
+		SELECT id, address, recovery_hash, credits, created_at, updated_at
 		FROM wallets
 		WHERE address = $1
 		FOR UPDATE
-	`, strings.ToLower(strings.TrimSpace(address))).Scan(&wallet.ID, &wallet.Address, &wallet.RecoveryHash, &wallet.CreatedAt, &wallet.UpdatedAt)
+	`, strings.ToLower(strings.TrimSpace(address))).Scan(&wallet.ID, &wallet.Address, &wallet.RecoveryHash, &wallet.Credits, &wallet.CreatedAt, &wallet.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return walletRecord{}, errWalletNotFound
 	}
@@ -464,6 +468,7 @@ func publicWallet(snapshot walletSnapshot) walletResponse {
 	}
 	return walletResponse{
 		Address:      snapshot.Wallet.Address,
+		Credits:      maxInt(0, snapshot.Wallet.Credits),
 		Entitlements: entitlements,
 	}
 }

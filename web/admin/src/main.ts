@@ -37,6 +37,26 @@ interface RuntimeSettings {
   upstreamTimeoutSeconds: number
 }
 
+interface CreditPrice {
+  id: string
+  serviceCode: string
+  billingKey: string
+  creditUnits: number
+  enabled: boolean
+  note?: string
+}
+
+interface TopupPlan {
+  id: string
+  label: string
+  amountUsdt: string
+  credits: number
+  isDefault: boolean
+  enabled: boolean
+  sortOrder: number
+  note?: string
+}
+
 interface WalletEntitlement {
   serviceCode: string
   label?: string
@@ -109,6 +129,11 @@ interface RuntimeSettingsResponse {
   settings: RuntimeSettings
 }
 
+interface BillingSettingsResponse {
+  creditPrices: CreditPrice[]
+  topupPlans: TopupPlan[]
+}
+
 interface AdminState {
   token: string
   profiles: ServiceProfile[]
@@ -125,6 +150,8 @@ interface AdminState {
   walletLookupAddress: string
   walletLookup: AdminWalletLookupResponse | null
   runtimeSettings: RuntimeSettings
+  creditPrices: CreditPrice[]
+  topupPlans: TopupPlan[]
   view: AdminView
 }
 
@@ -148,6 +175,8 @@ const state: AdminState = {
     imageProviderDefaultConcurrency: 2,
     upstreamTimeoutSeconds: 600,
   },
+  creditPrices: [],
+  topupPlans: [],
   view: 'main',
 }
 
@@ -359,6 +388,57 @@ app.innerHTML = `
           </form>
         </div>
       </section>
+      <section>
+        <div class="section-head">
+          <h2>Credits 计费</h2>
+          <div class="section-actions">
+            <button id="refreshBillingSettings" type="button">刷新</button>
+          </div>
+        </div>
+        <div class="body billing-settings">
+          <form id="creditPriceForm" class="form compact-form">
+            <div class="columns">
+              <label>服务代码<input name="serviceCode" placeholder="image-2-hd"></label>
+              <label>计费键<input name="billingKey" placeholder="4K"></label>
+            </div>
+            <div class="columns">
+              <label>消耗 credits<input name="creditUnits" type="number" min="1" value="1"></label>
+              <label>状态<select name="enabled"><option value="true">启用</option><option value="false">关闭</option></select></label>
+            </div>
+            <label>备注<input name="note" placeholder="例如：gpt-image-2 4K 或 TTS 标准价格"></label>
+            <div class="actions"><button class="primary" type="submit">保存价格</button></div>
+          </form>
+          <div class="table-wrap compact-table">
+            <table>
+              <thead><tr><th>服务</th><th>计费键</th><th>credits</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
+              <tbody id="creditPricesTable"></tbody>
+            </table>
+          </div>
+          <form id="topupPlanForm" class="form compact-form">
+            <div class="columns">
+              <label>套餐名称<input name="label" placeholder="10 USDT = 200 credits"></label>
+              <label>USDT 金额<input name="amountUsdt" type="number" min="0.01" step="0.01" value="10"></label>
+            </div>
+            <div class="columns">
+              <label>到账 credits<input name="credits" type="number" min="1" value="200"></label>
+              <label>排序<input name="sortOrder" type="number" min="1" value="10"></label>
+            </div>
+            <div class="columns">
+              <label>默认套餐<select name="isDefault"><option value="true">是</option><option value="false">否</option></select></label>
+              <label>状态<select name="enabled"><option value="true">启用</option><option value="false">关闭</option></select></label>
+            </div>
+            <label>备注<input name="note" placeholder="可选"></label>
+            <div class="actions"><button class="primary" type="submit">保存充值套餐</button></div>
+          </form>
+          <div class="table-wrap compact-table">
+            <table>
+              <thead><tr><th>套餐</th><th>USDT</th><th>credits</th><th>默认</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody id="topupPlansTable"></tbody>
+            </table>
+          </div>
+          <div id="billingSettingsMessage" class="message"></div>
+        </div>
+      </section>
     </div>
   </div>
 `
@@ -397,6 +477,12 @@ const els = {
   runtimeSettingsForm: mustGet<HTMLFormElement>('runtimeSettingsForm'),
   runtimeSettingsMessage: mustGet<HTMLDivElement>('runtimeSettingsMessage'),
   refreshRuntimeSettings: mustGet<HTMLButtonElement>('refreshRuntimeSettings'),
+  refreshBillingSettings: mustGet<HTMLButtonElement>('refreshBillingSettings'),
+  creditPriceForm: mustGet<HTMLFormElement>('creditPriceForm'),
+  topupPlanForm: mustGet<HTMLFormElement>('topupPlanForm'),
+  creditPricesTable: mustGet<HTMLTableSectionElement>('creditPricesTable'),
+  topupPlansTable: mustGet<HTMLTableSectionElement>('topupPlansTable'),
+  billingSettingsMessage: mustGet<HTMLDivElement>('billingSettingsMessage'),
   profileForm: mustGet<HTMLFormElement>('profileForm'),
   profileMessage: mustGet<HTMLDivElement>('profileMessage'),
   resetProfileForm: mustGet<HTMLButtonElement>('resetProfileForm'),
@@ -415,6 +501,7 @@ renderLicenses()
 renderProfiles()
 renderWalletLookup()
 renderRuntimeSettings()
+renderBillingSettings()
 bindEvents()
 
 if (state.token) {
@@ -658,6 +745,23 @@ function renderRuntimeSettings(): void {
   field<HTMLInputElement>(els.runtimeSettingsForm, 'upstreamTimeoutSeconds').value = String(state.runtimeSettings.upstreamTimeoutSeconds)
 }
 
+function renderBillingSettings(): void {
+  els.creditPricesTable.innerHTML =
+    state.creditPrices
+      .map(
+        (price) =>
+          `<tr><td><code>${h(price.serviceCode)}</code></td><td><span class="pill">${h(price.billingKey)}</span></td><td>${h(price.creditUnits)}</td><td>${price.enabled ? '<span class="pill ok">启用</span>' : '<span class="pill bad">关闭</span>'}</td><td>${price.note ? h(price.note) : '<span class="hint">未填写</span>'}</td><td><button class="small" type="button" data-edit-credit-price="${h(price.id)}">编辑</button></td></tr>`,
+      )
+      .join('') || '<tr><td colspan="6">暂无计费价格</td></tr>'
+  els.topupPlansTable.innerHTML =
+    state.topupPlans
+      .map(
+        (plan) =>
+          `<tr><td>${h(plan.label)}<div class="hint"><code>${h(plan.id)}</code></div></td><td>${h(plan.amountUsdt)}</td><td>${h(plan.credits)}</td><td>${plan.isDefault ? '<span class="pill ok">是</span>' : '<span class="pill">否</span>'}</td><td>${plan.enabled ? '<span class="pill ok">启用</span>' : '<span class="pill bad">关闭</span>'}</td><td><button class="small" type="button" data-edit-topup-plan="${h(plan.id)}">编辑</button></td></tr>`,
+      )
+      .join('') || '<tr><td colspan="6">暂无充值套餐</td></tr>'
+}
+
 async function loadLicenses(): Promise<void> {
   const params = new URLSearchParams({
     limit: String(state.licensePageSize),
@@ -691,6 +795,13 @@ async function loadRuntimeSettings(): Promise<void> {
   const data = await api<RuntimeSettingsResponse>('/admin/runtime-settings')
   state.runtimeSettings = data.settings || state.runtimeSettings
   renderRuntimeSettings()
+}
+
+async function loadBillingSettings(): Promise<void> {
+  const data = await api<BillingSettingsResponse>('/admin/billing-settings')
+  state.creditPrices = data.creditPrices || []
+  state.topupPlans = data.topupPlans || []
+  renderBillingSettings()
 }
 
 async function loadWalletLookup(address: string): Promise<void> {
@@ -790,7 +901,7 @@ function bindEvents(): void {
 
   els.settingsButton.addEventListener('click', () => {
     showAdminView('settings')
-    loadRuntimeSettings().catch((error: Error) => message(els.runtimeSettingsMessage, error.message, 'bad'))
+    Promise.all([loadRuntimeSettings(), loadBillingSettings()]).catch((error: Error) => message(els.runtimeSettingsMessage, error.message, 'bad'))
   })
 
   els.settingsBackButton.addEventListener('click', () => {
@@ -896,6 +1007,12 @@ function bindEvents(): void {
       .catch((error: Error) => message(els.runtimeSettingsMessage, error.message, 'bad'))
   })
 
+  els.refreshBillingSettings.addEventListener('click', () => {
+    loadBillingSettings()
+      .then(() => message(els.billingSettingsMessage, '计费设置已刷新', 'ok'))
+      .catch((error: Error) => message(els.billingSettingsMessage, error.message, 'bad'))
+  })
+
   els.runtimeSettingsForm.addEventListener('submit', async (event) => {
     event.preventDefault()
     message(els.runtimeSettingsMessage, '正在保存...')
@@ -911,6 +1028,52 @@ function bindEvents(): void {
       message(els.runtimeSettingsMessage, '运行设置已保存', 'ok')
     } catch (error) {
       message(els.runtimeSettingsMessage, (error as Error).message, 'bad')
+    }
+  })
+
+  els.creditPriceForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    message(els.billingSettingsMessage, '正在保存价格...')
+    try {
+      const payload = {
+        serviceCode: formValue(els.creditPriceForm, 'serviceCode').trim(),
+        billingKey: formValue(els.creditPriceForm, 'billingKey').trim(),
+        creditUnits: Number(formValue(els.creditPriceForm, 'creditUnits') || 1),
+        enabled: formValue(els.creditPriceForm, 'enabled') !== 'false',
+        note: formValue(els.creditPriceForm, 'note').trim(),
+      }
+      await api<CreditPrice>('/admin/credit-prices', { method: 'POST', body: JSON.stringify(payload) })
+      els.creditPriceForm.reset()
+      field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = '1'
+      await loadBillingSettings()
+      message(els.billingSettingsMessage, '价格已保存', 'ok')
+    } catch (error) {
+      message(els.billingSettingsMessage, (error as Error).message, 'bad')
+    }
+  })
+
+  els.topupPlanForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    message(els.billingSettingsMessage, '正在保存充值套餐...')
+    try {
+      const payload = {
+        label: formValue(els.topupPlanForm, 'label').trim(),
+        amountUsdt: formValue(els.topupPlanForm, 'amountUsdt').trim(),
+        credits: Number(formValue(els.topupPlanForm, 'credits') || 1),
+        sortOrder: Number(formValue(els.topupPlanForm, 'sortOrder') || 100),
+        isDefault: formValue(els.topupPlanForm, 'isDefault') === 'true',
+        enabled: formValue(els.topupPlanForm, 'enabled') !== 'false',
+        note: formValue(els.topupPlanForm, 'note').trim(),
+      }
+      await api<TopupPlan>('/admin/topup-plans', { method: 'POST', body: JSON.stringify(payload) })
+      els.topupPlanForm.reset()
+      field<HTMLInputElement>(els.topupPlanForm, 'amountUsdt').value = '10'
+      field<HTMLInputElement>(els.topupPlanForm, 'credits').value = '200'
+      field<HTMLInputElement>(els.topupPlanForm, 'sortOrder').value = '10'
+      await loadBillingSettings()
+      message(els.billingSettingsMessage, '充值套餐已保存', 'ok')
+    } catch (error) {
+      message(els.billingSettingsMessage, (error as Error).message, 'bad')
     }
   })
 
@@ -1066,6 +1229,32 @@ async function handleDocumentClick(event: MouseEvent): Promise<void> {
 
   if (target.dataset.deleteLicense) {
     await deleteLicenseIds([target.dataset.deleteLicense]).catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  }
+
+  if (target.dataset.editCreditPrice) {
+    const price = state.creditPrices.find((item) => item.id === target.dataset.editCreditPrice)
+    if (price) {
+      field<HTMLInputElement>(els.creditPriceForm, 'serviceCode').value = price.serviceCode
+      field<HTMLInputElement>(els.creditPriceForm, 'billingKey').value = price.billingKey
+      field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = String(price.creditUnits)
+      field<HTMLSelectElement>(els.creditPriceForm, 'enabled').value = String(price.enabled)
+      field<HTMLInputElement>(els.creditPriceForm, 'note').value = price.note || ''
+      message(els.billingSettingsMessage, '已载入价格，修改后保存。')
+    }
+  }
+
+  if (target.dataset.editTopupPlan) {
+    const plan = state.topupPlans.find((item) => item.id === target.dataset.editTopupPlan)
+    if (plan) {
+      field<HTMLInputElement>(els.topupPlanForm, 'label').value = plan.label
+      field<HTMLInputElement>(els.topupPlanForm, 'amountUsdt').value = plan.amountUsdt
+      field<HTMLInputElement>(els.topupPlanForm, 'credits').value = String(plan.credits)
+      field<HTMLInputElement>(els.topupPlanForm, 'sortOrder').value = String(plan.sortOrder)
+      field<HTMLSelectElement>(els.topupPlanForm, 'isDefault').value = String(plan.isDefault)
+      field<HTMLSelectElement>(els.topupPlanForm, 'enabled').value = String(plan.enabled)
+      field<HTMLInputElement>(els.topupPlanForm, 'note').value = plan.note || ''
+      message(els.billingSettingsMessage, '已载入充值套餐，修改后保存。')
+    }
   }
 
   if (target.dataset.editProfile) {

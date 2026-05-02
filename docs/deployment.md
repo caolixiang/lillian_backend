@@ -48,6 +48,13 @@ S3_ACCESS_KEY_ID=replace-with-access-key-id
 S3_SECRET_ACCESS_KEY=replace-with-secret-access-key
 S3_PUBLIC_BASE_URL=https://images.example.com
 S3_FORCE_PATH_STYLE=true
+
+EPUSDT_BASE_URL=https://pay.example.com
+EPUSDT_PID=replace-with-epusdt-pid
+EPUSDT_SECRET_KEY=replace-with-epusdt-secret-key
+EPUSDT_CURRENCY=usdt
+EPUSDT_TOKEN=usdt
+EPUSDT_NETWORK=tron
 ```
 
 These values have safe defaults in code but stay in the env templates so all three env files use the same shape:
@@ -142,6 +149,7 @@ Recommended first actions:
 - `TASK_WORKER_CONCURRENCY` is the startup worker-pool size. Use `16` as the initial production value on an 8 vCPU / 8 GB VPS when Postgres runs as a separate managed service; consider `24` after observing healthy provider throttling, object storage latency, and DB connection wait. Treat `32` as the next ceiling to test after metrics look stable.
 - `DB_POOL_MAX_CONNS` and `DB_POOL_MIN_CONNS` configure pgxpool. Start with `32` max and `4` min for the 8 vCPU / 8 GB VPS plus Railway Postgres deployment, then adjust only if connection wait or Railway connection limits say to.
 - Image runtime knobs live in Postgres and are edited from `/admin`, so changing concurrency or timeout does not require changing `.env`.
+- Credits pricing and recharge plans live in Postgres and are edited from `/admin`, so changing `1K/2K/4K` credit cost, adding future service pricing, or changing the `USDT -> credits` ratio does not require redeploying.
 - The backend starts a fixed worker pool internally, but a task can only be claimed when the database-backed global and provider concurrency limits allow it.
 - Per-wallet service concurrency is enforced by active queued/running task count and the redeemed exchange code's `max_concurrent`.
 - Provider concurrency is enforced when queued tasks are claimed. A provider's "最大并发" of `0` means "use 默认服务商并发".

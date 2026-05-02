@@ -35,6 +35,7 @@ type Config struct {
 	TaskPollInterval      time.Duration
 	TaskWorkerConcurrency int
 	Storage               StorageConfig
+	EPUSDT                EPUSDTConfig
 }
 
 type DatabaseConfig struct {
@@ -50,6 +51,15 @@ type StorageConfig struct {
 	SecretAccessKey string
 	PublicBaseURL   string
 	ForcePathStyle  bool
+}
+
+type EPUSDTConfig struct {
+	BaseURL   string
+	PID       string
+	SecretKey string
+	Currency  string
+	Token     string
+	Network   string
 }
 
 func Load(version string) (Config, error) {
@@ -92,6 +102,14 @@ func Load(version string) (Config, error) {
 			SecretAccessKey: stringEnv("S3_SECRET_ACCESS_KEY", ""),
 			PublicBaseURL:   strings.TrimRight(stringEnv("S3_PUBLIC_BASE_URL", ""), "/"),
 			ForcePathStyle:  boolEnv("S3_FORCE_PATH_STYLE", true),
+		},
+		EPUSDT: EPUSDTConfig{
+			BaseURL:   strings.TrimRight(stringEnv("EPUSDT_BASE_URL", ""), "/"),
+			PID:       stringEnv("EPUSDT_PID", ""),
+			SecretKey: stringEnv("EPUSDT_SECRET_KEY", ""),
+			Currency:  stringEnv("EPUSDT_CURRENCY", "USDT"),
+			Token:     stringEnv("EPUSDT_TOKEN", "USDT"),
+			Network:   stringEnv("EPUSDT_NETWORK", "TRON"),
 		},
 	}
 

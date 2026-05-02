@@ -42,6 +42,9 @@ func TestLoadRuntimeValues(t *testing.T) {
 	t.Setenv("DB_POOL_MAX_CONNS", "32")
 	t.Setenv("DB_POOL_MIN_CONNS", "4")
 	t.Setenv("S3_FORCE_PATH_STYLE", "false")
+	t.Setenv("EPUSDT_BASE_URL", "https://pay.example.com")
+	t.Setenv("EPUSDT_PID", "merchant-1")
+	t.Setenv("EPUSDT_SECRET_KEY", "secret-1")
 
 	cfg, err := Load("dev")
 	if err != nil {
@@ -64,5 +67,17 @@ func TestLoadRuntimeValues(t *testing.T) {
 	}
 	if cfg.Storage.ForcePathStyle {
 		t.Fatalf("ForcePathStyle should be false")
+	}
+	if cfg.EPUSDT.BaseURL != "https://pay.example.com" {
+		t.Fatalf("EPUSDT.BaseURL = %q", cfg.EPUSDT.BaseURL)
+	}
+	if cfg.EPUSDT.PID != "merchant-1" {
+		t.Fatalf("EPUSDT.PID = %q", cfg.EPUSDT.PID)
+	}
+	if cfg.EPUSDT.SecretKey != "secret-1" {
+		t.Fatalf("EPUSDT.SecretKey = %q", cfg.EPUSDT.SecretKey)
+	}
+	if cfg.EPUSDT.Currency != "USDT" || cfg.EPUSDT.Token != "USDT" || cfg.EPUSDT.Network != "TRON" {
+		t.Fatalf("EPUSDT asset = %s/%s/%s", cfg.EPUSDT.Currency, cfg.EPUSDT.Token, cfg.EPUSDT.Network)
 	}
 }
