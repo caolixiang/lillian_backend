@@ -16,19 +16,24 @@ import (
 type Server struct {
 	cfg            config.Config
 	db             *pgxpool.Pool
+	wallets        walletStore
 	store          storage.ObjectStore
 	logger         *log.Logger
 	upstreamClient *http.Client
 }
 
 func New(cfg config.Config, db *pgxpool.Pool, store storage.ObjectStore, logger *log.Logger) *Server {
-	return &Server{
+	server := &Server{
 		cfg:            cfg,
 		db:             db,
 		store:          store,
 		logger:         logger,
 		upstreamClient: newUpstreamHTTPClient(),
 	}
+	if db != nil {
+		server.wallets = postgresWalletStore{db: db}
+	}
+	return server
 }
 
 func (s *Server) Handler() http.Handler {
@@ -51,6 +56,9 @@ func (s *Server) Handler() http.Handler {
 	r.Head("/lillian-icon.svg", s.handleIcon)
 	r.Post("/api/keys/activate", s.handleActivateLicense)
 	r.Get("/api/me/credits", s.handleCredits)
+	r.Post("/api/wallets/create", s.handleCreateWallet)
+	r.Post("/api/wallets/restore", s.handleRestoreWallet)
+	r.Get("/api/wallets/{address}", s.handleGetWallet)
 	r.Post("/api/tasks", s.handleCreateTask)
 	r.Get("/api/tasks/{id}", s.handleGetTask)
 	r.Get("/api/tasks/{id}/images/{index}", s.handleGetTaskImage)
