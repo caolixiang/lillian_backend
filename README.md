@@ -66,6 +66,9 @@ Optional deployment overrides:
 
 - `CORS_ORIGIN` - browser origin allowlist; defaults to `*`.
 - `PUBLIC_API_BASE_URL` - public backend URL override; defaults to the current request's forwarded host/protocol.
+- `TASK_WORKER_CONCURRENCY` - backend task worker goroutines; defaults to `2`. For an 8 vCPU / 8 GB VPS with Postgres running as a separate service, start at `16`; raise to `24` if upstream provider limits, object storage latency, and DB connection wait stay healthy. Treat `32` as the next observation-driven ceiling, not the first value.
+- `DB_POOL_MAX_CONNS` - pgxpool maximum Postgres connections. Production example uses `32` for an 8 vCPU / 8 GB VPS with managed Postgres.
+- `DB_POOL_MIN_CONNS` - pgxpool minimum warm Postgres connections. Production example uses `4`.
 
 SQL migrations are bundled in the Docker image and run automatically on startup. There is no normal Railway/VPS env value to configure for migrations.
 
@@ -74,6 +77,8 @@ Runtime image settings are stored in Postgres and edited from `/admin`, not in `
 - Global image concurrency: total number of upstream synchronous image tasks allowed to run at once.
 - Default provider concurrency: per-provider limit when the provider does not override it.
 - Upstream timeout seconds: timeout for one synchronous generation call plus image retrieval.
+
+`TASK_WORKER_CONCURRENCY` only controls how many backend workers can look for work. Workers do not hold a database transaction while waiting for upstream image generation, and actual upstream generation concurrency is still capped by the `/admin` runtime settings and provider/license limits. Keep `DB_POOL_MAX_CONNS` comfortably above expected active DB bursts from workers and API requests, but below the Railway Postgres connection limit.
 
 ## Local
 

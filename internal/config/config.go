@@ -28,12 +28,18 @@ type Config struct {
 	LicenseKeyPepper      string
 	ProviderSecret        string
 	DatabaseURL           string
+	Database              DatabaseConfig
 	AutoMigrate           bool
 	MigrationsDir         string
 	UpstreamTimeout       time.Duration
 	TaskPollInterval      time.Duration
 	TaskWorkerConcurrency int
 	Storage               StorageConfig
+}
+
+type DatabaseConfig struct {
+	PoolMaxConns int
+	PoolMinConns int
 }
 
 type StorageConfig struct {
@@ -59,16 +65,20 @@ func Load(version string) (Config, error) {
 	}
 
 	cfg := Config{
-		ServiceName:           stringEnv("SERVICE_NAME", DefaultServiceName),
-		Version:               version,
-		Environment:           stringEnv("APP_ENV", "local"),
-		ListenAddr:            listenAddr,
-		PublicAPIBaseURL:      strings.TrimRight(stringEnv("PUBLIC_API_BASE_URL", ""), "/"),
-		CORSOrigin:            stringEnv("CORS_ORIGIN", "*"),
-		AdminToken:            stringEnv("ADMIN_TOKEN", ""),
-		LicenseKeyPepper:      stringEnv("LICENSE_KEY_PEPPER", ""),
-		ProviderSecret:        stringEnv("PROVIDER_CREDENTIAL_SECRET", ""),
-		DatabaseURL:           stringEnv("DATABASE_URL", ""),
+		ServiceName:      stringEnv("SERVICE_NAME", DefaultServiceName),
+		Version:          version,
+		Environment:      stringEnv("APP_ENV", "local"),
+		ListenAddr:       listenAddr,
+		PublicAPIBaseURL: strings.TrimRight(stringEnv("PUBLIC_API_BASE_URL", ""), "/"),
+		CORSOrigin:       stringEnv("CORS_ORIGIN", "*"),
+		AdminToken:       stringEnv("ADMIN_TOKEN", ""),
+		LicenseKeyPepper: stringEnv("LICENSE_KEY_PEPPER", ""),
+		ProviderSecret:   stringEnv("PROVIDER_CREDENTIAL_SECRET", ""),
+		DatabaseURL:      stringEnv("DATABASE_URL", ""),
+		Database: DatabaseConfig{
+			PoolMaxConns: intEnv("DB_POOL_MAX_CONNS", 0),
+			PoolMinConns: intEnv("DB_POOL_MIN_CONNS", 0),
+		},
 		AutoMigrate:           boolEnv("AUTO_MIGRATE", DefaultAutoMigrate),
 		MigrationsDir:         stringEnv("MIGRATIONS_DIR", "migrations"),
 		UpstreamTimeout:       durationSecondsEnv("UPSTREAM_TIMEOUT_SECONDS", DefaultUpstreamTimeout),

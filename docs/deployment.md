@@ -139,6 +139,8 @@ Recommended first actions:
 ## Operational Notes
 
 - Startup ENV should be limited to infrastructure and secrets: Postgres, S3/R2, public URLs, admin password, and encryption/hash secrets.
+- `TASK_WORKER_CONCURRENCY` is the startup worker-pool size. Use `16` as the initial production value on an 8 vCPU / 8 GB VPS when Postgres runs as a separate managed service; consider `24` after observing healthy provider throttling, object storage latency, and DB connection wait. Treat `32` as the next ceiling to test after metrics look stable.
+- `DB_POOL_MAX_CONNS` and `DB_POOL_MIN_CONNS` configure pgxpool. Start with `32` max and `4` min for the 8 vCPU / 8 GB VPS plus Railway Postgres deployment, then adjust only if connection wait or Railway connection limits say to.
 - Image runtime knobs live in Postgres and are edited from `/admin`, so changing concurrency or timeout does not require changing `.env`.
 - The backend starts a fixed worker pool internally, but a task can only be claimed when the database-backed global and provider concurrency limits allow it.
 - Per-license concurrency is enforced by active queued/running task count and the exchange code's `max_concurrent`.

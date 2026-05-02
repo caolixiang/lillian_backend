@@ -22,7 +22,10 @@ type App struct {
 }
 
 func New(ctx context.Context, cfg config.Config, logger *log.Logger) (*App, error) {
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	pool, err := db.Open(ctx, cfg.DatabaseURL, db.PoolOptions{
+		MaxConns: cfg.Database.PoolMaxConns,
+		MinConns: cfg.Database.PoolMinConns,
+	})
 	if err != nil {
 		return nil, err
 	}

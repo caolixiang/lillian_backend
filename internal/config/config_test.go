@@ -39,6 +39,8 @@ func TestLoadRuntimeValues(t *testing.T) {
 	t.Setenv("PORT", "9000")
 	t.Setenv("UPSTREAM_TIMEOUT_SECONDS", "600")
 	t.Setenv("TASK_WORKER_CONCURRENCY", "6")
+	t.Setenv("DB_POOL_MAX_CONNS", "32")
+	t.Setenv("DB_POOL_MIN_CONNS", "4")
 	t.Setenv("S3_FORCE_PATH_STYLE", "false")
 
 	cfg, err := Load("dev")
@@ -53,6 +55,12 @@ func TestLoadRuntimeValues(t *testing.T) {
 	}
 	if cfg.TaskWorkerConcurrency != 6 {
 		t.Fatalf("TaskWorkerConcurrency = %d", cfg.TaskWorkerConcurrency)
+	}
+	if cfg.Database.PoolMaxConns != 32 {
+		t.Fatalf("Database.PoolMaxConns = %d", cfg.Database.PoolMaxConns)
+	}
+	if cfg.Database.PoolMinConns != 4 {
+		t.Fatalf("Database.PoolMinConns = %d", cfg.Database.PoolMinConns)
 	}
 	if cfg.Storage.ForcePathStyle {
 		t.Fatalf("ForcePathStyle should be false")
