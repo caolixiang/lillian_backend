@@ -62,10 +62,12 @@ func TestCreditBillingForImageGenerationUsesConfiguredPrices(t *testing.T) {
 	server := &Server{
 		db: nil,
 	}
-	if got := billingKeyForImageGeneration("4K"); got != "4K" {
-		t.Fatalf("billing key = %q", got)
+	for _, sizeTier := range []string{"2K", "4K"} {
+		if got := billingKeyForImageGeneration(sizeTier); got != "HD" {
+			t.Fatalf("billing key for %s = %q", sizeTier, got)
+		}
 	}
-	if got := creditServiceCandidatesForImageGeneration("1K"); len(got) != 2 || got[0] != serviceCodeImage2SD || got[1] != serviceCodeImage2HD {
+	if got := creditServiceCandidatesForImageGeneration("1K"); len(got) != 1 || got[0] != serviceCodeImage2SD {
 		t.Fatalf("1K candidates = %#v", got)
 	}
 	if _, err := server.creditBillingForImageGeneration(context.Background(), 10, "4K"); err == nil {

@@ -49,6 +49,19 @@ type serviceCreditPrice struct {
 	UpdatedAt   time.Time
 }
 
+func supportedServiceCreditPrice(serviceCode, billingKey string) bool {
+	serviceCode = strings.TrimSpace(serviceCode)
+	billingKey = strings.ToUpper(strings.TrimSpace(billingKey))
+	switch serviceCode {
+	case serviceCodeImage2SD:
+		return billingKey == "1K"
+	case serviceCodeImage2HD:
+		return billingKey == "HD"
+	default:
+		return false
+	}
+}
+
 type paymentOrder struct {
 	ID              string
 	WalletID        string
@@ -352,6 +365,10 @@ func (s *Server) handleAdminUpsertCreditPrice(w http.ResponseWriter, r *http.Req
 		errorJSON(w, http.StatusBadRequest, "服务代码和计费键为必填")
 		return
 	}
+	if !supportedServiceCreditPrice(serviceCode, billingKey) {
+		errorJSON(w, http.StatusBadRequest, "当前仅支持配置标清 1K 和高清 2K/4K 的 credits 价格")
+		return
+	}
 	id := strings.TrimSpace(body.ID)
 	if id == "" {
 		id = "service-credit-" + safeIDPart(serviceCode) + "-" + safeIDPart(billingKey)
@@ -604,6 +621,8 @@ func (s *Server) serviceCreditPrices(ctx context.Context) ([]serviceCreditPrice,
 	rows, err := s.db.Query(ctx, `
 		SELECT id, service_code, billing_key, credit_units, enabled, note, created_at, updated_at
 		FROM service_credit_prices
+		WHERE (service_code = 'image-2-sd' AND billing_key = '1K')
+			OR (service_code = 'image-2-hd' AND billing_key = 'HD')
 		ORDER BY service_code, billing_key
 	`)
 	if err != nil {

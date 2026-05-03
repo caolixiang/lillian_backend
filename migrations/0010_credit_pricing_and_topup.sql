@@ -40,9 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_plan_created
 
 INSERT INTO service_credit_prices (id, service_code, billing_key, credit_units, enabled, note, created_at, updated_at)
 VALUES
-  ('service-credit-image-2-hd-1k', 'image-2-hd', '1K', 1, true, '默认 1K credits 价格', NOW(), NOW()),
-  ('service-credit-image-2-hd-2k', 'image-2-hd', '2K', 2, true, '默认 2K credits 价格', NOW(), NOW()),
-  ('service-credit-image-2-hd-4k', 'image-2-hd', '4K', 2, true, '默认 4K credits 价格', NOW(), NOW()),
+  ('service-credit-image-2-hd-hd', 'image-2-hd', 'HD', 2, true, '默认高清 2K/4K credits 价格', NOW(), NOW()),
   ('service-credit-image-2-sd-1k', 'image-2-sd', '1K', 1, true, '默认标清 1K credits 价格', NOW(), NOW())
 ON CONFLICT (service_code, billing_key) DO UPDATE SET
   credit_units = excluded.credit_units,

@@ -118,7 +118,7 @@ func TestRemoveActivationTokenFlowMigrationDropsLegacyTablesAndColumns(t *testin
 }
 
 func TestWalletCreditsPaymentMigrationsDefineGenericPricingAndTopups(t *testing.T) {
-	sql := readMigration(t, "0009_wallet_credits_payments.sql") + "\n" + readMigration(t, "0010_credit_pricing_and_topup.sql")
+	sql := readMigration(t, "0009_wallet_credits_payments.sql") + "\n" + readMigration(t, "0010_credit_pricing_and_topup.sql") + "\n" + readMigration(t, "0011_unify_hd_credit_pricing.sql")
 	for _, want := range []string{
 		"ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 0",
 		"ADD COLUMN IF NOT EXISTS credit_units INTEGER NOT NULL DEFAULT 1",
@@ -127,7 +127,8 @@ func TestWalletCreditsPaymentMigrationsDefineGenericPricingAndTopups(t *testing.
 		"CREATE TABLE IF NOT EXISTS service_credit_prices",
 		"UNIQUE (service_code, billing_key)",
 		"CREATE TABLE IF NOT EXISTS credit_topup_plans",
-		"('service-credit-image-2-hd-4k', 'image-2-hd', '4K', 2",
+		"('service-credit-image-2-hd-hd', 'image-2-hd', 'HD', 2",
+		"billing_key IN ('1K', '2K', '4K')",
 		"('topup-usdt-10-credits-200', '10 USDT = 200 credits', 10, 200",
 	} {
 		if !strings.Contains(sql, want) {

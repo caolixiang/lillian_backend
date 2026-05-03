@@ -197,6 +197,27 @@ func TestDecimalStringEqual(t *testing.T) {
 	}
 }
 
+func TestSupportedServiceCreditPriceOnlyAllowsBusinessBackedImageRows(t *testing.T) {
+	tests := []struct {
+		serviceCode string
+		billingKey  string
+		want        bool
+	}{
+		{serviceCodeImage2SD, "1K", true},
+		{serviceCodeImage2HD, "1K", false},
+		{serviceCodeImage2HD, "HD", true},
+		{serviceCodeImage2HD, "2K", false},
+		{serviceCodeImage2HD, "4K", false},
+		{"tts-standard", "STANDARD", false},
+	}
+
+	for _, tt := range tests {
+		if got := supportedServiceCreditPrice(tt.serviceCode, tt.billingKey); got != tt.want {
+			t.Fatalf("supportedServiceCreditPrice(%q, %q) = %v", tt.serviceCode, tt.billingKey, got)
+		}
+	}
+}
+
 func md5Hex(value string) string {
 	sum := md5.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])

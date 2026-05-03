@@ -83,7 +83,7 @@ Runtime image settings are stored in Postgres and edited from `/admin`, not in `
 
 Credits pricing and recharge plans are also stored in Postgres and edited from `/admin`. Credits are a generic wallet balance, not an image-only counter:
 
-- `service_credit_prices`: generic service pricing by `service_code + billing_key`. Image generation uses `image-2-sd/image-2-hd + 1K/2K/4K` as the first seeded service keys; future services can add their own `service_code` and billing keys without changing the wallet balance model.
+- `service_credit_prices`: generic service pricing by `service_code + billing_key`. Image generation currently uses `image-2-sd + 1K` for standard 1K images and `image-2-hd + HD` for 2K/4K images; future services can add their own real service codes and billing keys without changing the wallet balance model.
 - `credit_topup_plans`: recharge packages, seeded with `10 USDT = 200 credits`.
 
 `TASK_WORKER_CONCURRENCY` only controls how many backend workers can look for work. Workers do not hold a database transaction while waiting for upstream image generation, and actual upstream generation concurrency is still capped by the `/admin` runtime settings and provider/license limits. Keep `DB_POOL_MAX_CONNS` comfortably above expected active DB bursts from workers and API requests, but below the Railway Postgres connection limit.

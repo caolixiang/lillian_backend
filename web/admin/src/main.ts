@@ -46,6 +46,15 @@ interface CreditPrice {
   note?: string
 }
 
+interface CreditPricePreset {
+  key: string
+  label: string
+  detail: string
+  serviceCode: string
+  billingKey: string
+  defaultNote: string
+}
+
 interface TopupPlan {
   id: string
   label: string
@@ -179,6 +188,25 @@ const state: AdminState = {
   topupPlans: [],
   view: 'main',
 }
+
+const creditPricePresets: CreditPricePreset[] = [
+  {
+    key: 'image-2-sd:1K',
+    label: '标清 1K',
+    detail: 'image-2-sd / 1K',
+    serviceCode: 'image-2-sd',
+    billingKey: '1K',
+    defaultNote: '默认标清 1K credits 价格',
+  },
+  {
+    key: 'image-2-hd:HD',
+    label: '高清 2K/4K',
+    detail: 'image-2-hd / HD',
+    serviceCode: 'image-2-hd',
+    billingKey: 'HD',
+    defaultNote: '默认高清 2K/4K credits 价格',
+  },
+]
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
@@ -397,15 +425,14 @@ app.innerHTML = `
         </div>
         <div class="body billing-settings">
           <form id="creditPriceForm" class="form compact-form">
-            <div class="columns">
-              <label>服务代码<input name="serviceCode" placeholder="image-2-hd"></label>
-              <label>计费键<input name="billingKey" placeholder="4K"></label>
-            </div>
+            <label>计费项目<select name="pricePreset">${creditPricePresets
+              .map((preset) => `<option value="${h(preset.key)}">${h(preset.label)} - ${h(preset.detail)}</option>`)
+              .join('')}</select></label>
             <div class="columns">
               <label>消耗 credits<input name="creditUnits" type="number" min="1" value="1"></label>
               <label>状态<select name="enabled"><option value="true">启用</option><option value="false">关闭</option></select></label>
             </div>
-            <label>备注<input name="note" placeholder="例如：gpt-image-2 4K 或 TTS 标准价格"></label>
+            <label>备注<input name="note" placeholder="可选，例如：高清统一价格"></label>
             <div class="actions"><button class="primary" type="submit">保存价格</button></div>
           </form>
           <div class="table-wrap compact-table">
@@ -749,8 +776,12 @@ function renderBillingSettings(): void {
   els.creditPricesTable.innerHTML =
     state.creditPrices
       .map(
-        (price) =>
-          `<tr><td><code>${h(price.serviceCode)}</code></td><td><span class="pill">${h(price.billingKey)}</span></td><td>${h(price.creditUnits)}</td><td>${price.enabled ? '<span class="pill ok">启用</span>' : '<span class="pill bad">关闭</span>'}</td><td>${price.note ? h(price.note) : '<span class="hint">未填写</span>'}</td><td><button class="small" type="button" data-edit-credit-price="${h(price.id)}">编辑</button></td></tr>`,
+        (price) => {
+          const preset = creditPricePresetFor(price.serviceCode, price.billingKey)
+          const label = preset?.label || `${price.serviceCode} / ${price.billingKey}`
+          const detail = preset?.detail || `${price.serviceCode} / ${price.billingKey}`
+          return `<tr><td>${h(label)}<div class="hint">${h(detail)}</div></td><td><span class="pill">${h(price.billingKey)}</span></td><td>${h(price.creditUnits)}</td><td>${price.enabled ? '<span class="pill ok">启用</span>' : '<span class="pill bad">关闭</span>'}</td><td>${price.note ? h(price.note) : '<span class="hint">未填写</span>'}</td><td><button class="small" type="button" data-edit-credit-price="${h(price.id)}">编辑</button></td></tr>`
+        },
       )
       .join('') || '<tr><td colspan="6">暂无计费价格</td></tr>'
   els.topupPlansTable.innerHTML =
@@ -1035,15 +1066,20 @@ function bindEvents(): void {
     event.preventDefault()
     message(els.billingSettingsMessage, '正在保存价格...')
     try {
+      const preset = creditPricePresetByKey(formValue(els.creditPriceForm, 'pricePreset'))
+      if (!preset) {
+        throw new Error('请选择有效的计费项目')
+      }
       const payload = {
-        serviceCode: formValue(els.creditPriceForm, 'serviceCode').trim(),
-        billingKey: formValue(els.creditPriceForm, 'billingKey').trim(),
+        serviceCode: preset.serviceCode,
+        billingKey: preset.billingKey,
         creditUnits: Number(formValue(els.creditPriceForm, 'creditUnits') || 1),
         enabled: formValue(els.creditPriceForm, 'enabled') !== 'false',
-        note: formValue(els.creditPriceForm, 'note').trim(),
+        note: formValue(els.creditPriceForm, 'note').trim() || preset.defaultNote,
       }
       await api<CreditPrice>('/admin/credit-prices', { method: 'POST', body: JSON.stringify(payload) })
       els.creditPriceForm.reset()
+      field<HTMLSelectElement>(els.creditPriceForm, 'pricePreset').value = creditPricePresets[0]?.key || ''
       field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = '1'
       await loadBillingSettings()
       message(els.billingSettingsMessage, '价格已保存', 'ok')
@@ -1176,6 +1212,15 @@ function serviceLabel(value: string): string {
   return '标清 1K'
 }
 
+function creditPricePresetByKey(key: string): CreditPricePreset | undefined {
+  return creditPricePresets.find((preset) => preset.key === key)
+}
+
+function creditPricePresetFor(serviceCode: string, billingKey: string): CreditPricePreset | undefined {
+  const normalizedKey = `${serviceCode}:${billingKey.toUpperCase()}`
+  return creditPricePresetByKey(normalizedKey)
+}
+
 async function handleDocumentClick(event: MouseEvent): Promise<void> {
   const target = event.target
   if (!(target instanceof HTMLElement)) return
@@ -1234,8 +1279,10 @@ async function handleDocumentClick(event: MouseEvent): Promise<void> {
   if (target.dataset.editCreditPrice) {
     const price = state.creditPrices.find((item) => item.id === target.dataset.editCreditPrice)
     if (price) {
-      field<HTMLInputElement>(els.creditPriceForm, 'serviceCode').value = price.serviceCode
-      field<HTMLInputElement>(els.creditPriceForm, 'billingKey').value = price.billingKey
+      const preset = creditPricePresetFor(price.serviceCode, price.billingKey)
+      if (preset) {
+        field<HTMLSelectElement>(els.creditPriceForm, 'pricePreset').value = preset.key
+      }
       field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = String(price.creditUnits)
       field<HTMLSelectElement>(els.creditPriceForm, 'enabled').value = String(price.enabled)
       field<HTMLInputElement>(els.creditPriceForm, 'note').value = price.note || ''

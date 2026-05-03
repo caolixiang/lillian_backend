@@ -1300,14 +1300,14 @@ func creditServiceCandidatesForImageGeneration(sizeTier string) []string {
 	if sizeTier == "2K" || sizeTier == "4K" {
 		return []string{serviceCodeImage2HD}
 	}
-	return []string{serviceCodeImage2SD, serviceCodeImage2HD}
+	return []string{serviceCodeImage2SD}
 }
 
 func billingKeyForImageGeneration(sizeTier string) string {
 	sizeTier = strings.ToUpper(strings.TrimSpace(sizeTier))
 	switch sizeTier {
 	case "2K", "4K":
-		return sizeTier
+		return "HD"
 	default:
 		return "1K"
 	}
