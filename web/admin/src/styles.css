@@ -159,6 +159,13 @@ h2 {
   font-size: 14px;
 }
 
+h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
 .subtitle {
   margin-top: 3px;
   color: var(--muted);
@@ -349,6 +356,66 @@ section {
 .billing-settings {
   display: grid;
   gap: 14px;
+}
+
+.settings-table-block {
+  display: grid;
+  gap: 10px;
+}
+
+.subsection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  background: rgb(32 33 36 / 42%);
+  padding: 20px;
+}
+
+.modal-panel {
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgb(35 35 30 / 24%);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--soft);
+  padding: 13px 14px;
+}
+
+.modal-close {
+  width: 34px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.modal-body {
+  max-height: calc(100vh - 116px);
+  overflow: auto;
+  padding: 14px;
 }
 
 .list-toolbar {

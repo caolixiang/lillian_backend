@@ -2,6 +2,7 @@ import './styles.css'
 
 type MessageKind = '' | 'ok' | 'bad'
 type AdminView = 'main' | 'settings'
+type AdminModalKind = '' | 'profile' | 'creditPrice' | 'topupPlan'
 
 interface LicenseRecord {
   id: string
@@ -162,6 +163,7 @@ interface AdminState {
   creditPrices: CreditPrice[]
   topupPlans: TopupPlan[]
   view: AdminView
+  activeModal: AdminModalKind
 }
 
 const state: AdminState = {
@@ -187,6 +189,7 @@ const state: AdminState = {
   creditPrices: [],
   topupPlans: [],
   view: 'main',
+  activeModal: '',
 }
 
 const creditPricePresets: CreditPricePreset[] = [
@@ -326,35 +329,6 @@ app.innerHTML = `
                 <tbody id="profilesTable"></tbody>
               </table>
             </div>
-            <div id="providerFormWrap" class="provider-form-wrap" hidden>
-              <div class="section-head"><h2>服务商配置</h2></div>
-              <div class="body">
-                <form id="profileForm" class="form">
-                  <input name="id" type="hidden">
-                  <div class="columns">
-                    <label>名称<input name="label" placeholder="OpenAI Compatible HD"></label>
-                    <label>桶<select name="tierBucket"><option value="1k">1K</option><option value="hd">HD</option></select></label>
-                  </div>
-                  <label>Base URL<input name="apiBaseUrl" placeholder="https://api.openai.com/v1"></label>
-                  <label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="更新时留空表示沿用原密钥"></label>
-                  <div class="columns">
-                    <label>优先级<input name="priority" type="number" min="1" value="100"></label>
-                    <label>最大并发<input name="maxConcurrent" type="number" min="0" max="100" value="0"></label>
-                  </div>
-                  <div class="columns">
-                    <label>状态<select name="status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
-                    <label>API 模式<select name="apiMode"><option value="images">OpenAI Images</option><option value="ohmytoken">OhMyToken</option><option value="responses">Responses</option></select></label>
-                  </div>
-                  <p class="hint">模型固定为 gpt-image-2。OpenAI Images/Responses 会发送质量参数；OhMyToken 模式只发送 size、aspect_ratio、response_format。</p>
-                  <div class="actions">
-                    <button class="primary" type="submit">保存服务商</button>
-                    <button id="resetProfileForm" type="button">清空</button>
-                    <button id="deleteProfileButton" class="danger form-delete" type="button" hidden>删除服务商</button>
-                  </div>
-                  <div id="profileMessage" class="message"></div>
-                </form>
-              </div>
-            </div>
           </div>
           <div id="walletsPanel" class="tabpanel">
             <div class="section-head">
@@ -424,50 +398,102 @@ app.innerHTML = `
           </div>
         </div>
         <div class="body billing-settings">
-          <form id="creditPriceForm" class="form compact-form">
-            <label>计费项目<select name="pricePreset">${creditPricePresets
-              .map((preset) => `<option value="${h(preset.key)}">${h(preset.label)} - ${h(preset.detail)}</option>`)
-              .join('')}</select></label>
-            <div class="columns">
-              <label>消耗 credits<input name="creditUnits" type="number" min="1" value="1"></label>
-              <label>状态<select name="enabled"><option value="true">启用</option><option value="false">关闭</option></select></label>
+          <div class="settings-table-block">
+            <div class="subsection-head">
+              <h3>Credits 价格</h3>
+              <button id="newCreditPrice" type="button">配置价格</button>
             </div>
-            <label>备注<input name="note" placeholder="可选，例如：高清统一价格"></label>
-            <div class="actions"><button class="primary" type="submit">保存价格</button></div>
-          </form>
-          <div class="table-wrap compact-table">
-            <table>
-              <thead><tr><th>服务</th><th>计费键</th><th>credits</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
-              <tbody id="creditPricesTable"></tbody>
-            </table>
+            <div class="table-wrap compact-table">
+              <table>
+                <thead><tr><th>服务</th><th>计费键</th><th>credits</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
+                <tbody id="creditPricesTable"></tbody>
+              </table>
+            </div>
           </div>
-          <form id="topupPlanForm" class="form compact-form">
-            <div class="columns">
-              <label>套餐名称<input name="label" placeholder="10 USDT = 200 credits"></label>
-              <label>USDT 金额<input name="amountUsdt" type="number" min="0.01" step="0.01" value="10"></label>
+          <div class="settings-table-block">
+            <div class="subsection-head">
+              <h3>充值套餐</h3>
+              <button id="newTopupPlan" type="button">新增套餐</button>
             </div>
-            <div class="columns">
-              <label>到账 credits<input name="credits" type="number" min="1" value="200"></label>
-              <label>排序<input name="sortOrder" type="number" min="1" value="10"></label>
+            <div class="table-wrap compact-table">
+              <table>
+                <thead><tr><th>套餐</th><th>USDT</th><th>credits</th><th>默认</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="topupPlansTable"></tbody>
+              </table>
             </div>
-            <div class="columns">
-              <label>默认套餐<select name="isDefault"><option value="true">是</option><option value="false">否</option></select></label>
-              <label>状态<select name="enabled"><option value="true">启用</option><option value="false">关闭</option></select></label>
-            </div>
-            <label>备注<input name="note" placeholder="可选"></label>
-            <div class="actions"><button class="primary" type="submit">保存充值套餐</button></div>
-          </form>
-          <div class="table-wrap compact-table">
-            <table>
-              <thead><tr><th>套餐</th><th>USDT</th><th>credits</th><th>默认</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody id="topupPlansTable"></tbody>
-            </table>
           </div>
           <div id="billingSettingsMessage" class="message"></div>
         </div>
       </section>
     </div>
-  </div>
+
+    <div id="adminModal" class="modal-backdrop" hidden>
+      <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="adminModalTitle">
+        <div class="modal-head">
+          <h2 id="adminModalTitle"></h2>
+          <button id="adminModalClose" class="modal-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="profileModalBody" class="modal-form-slot" hidden>
+            <form id="profileForm" class="form">
+              <input name="id" type="hidden">
+              <div class="columns">
+                <label>名称<input name="label" placeholder="OpenAI Compatible HD"></label>
+                <label>桶<select name="tierBucket"><option value="1k">1K</option><option value="hd">HD</option></select></label>
+              </div>
+              <label>Base URL<input name="apiBaseUrl" placeholder="https://api.openai.com/v1"></label>
+              <label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="更新时留空表示沿用原密钥"></label>
+              <div class="columns">
+                <label>优先级<input name="priority" type="number" min="1" value="100"></label>
+                <label>最大并发<input name="maxConcurrent" type="number" min="0" max="100" value="0"></label>
+              </div>
+              <div class="columns">
+                <label>状态<select name="status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
+                <label>API 模式<select name="apiMode"><option value="images">OpenAI Images</option><option value="ohmytoken">OhMyToken</option><option value="responses">Responses</option></select></label>
+              </div>
+              <p class="hint">模型固定为 gpt-image-2。OpenAI Images/Responses 会发送质量参数；OhMyToken 模式只发送 size、aspect_ratio、response_format。</p>
+              <div class="actions">
+                <button class="primary" type="submit">保存服务商</button>
+                <button id="resetProfileForm" type="button">清空</button>
+                <button id="deleteProfileButton" class="danger form-delete" type="button" hidden>删除服务商</button>
+              </div>
+              <div id="profileMessage" class="message"></div>
+            </form>
+          </div>
+          <div id="creditPriceModalBody" class="modal-form-slot" hidden>
+            <form id="creditPriceForm" class="form">
+              <label>计费项目<select name="pricePreset">${creditPricePresets
+                .map((preset) => `<option value="${h(preset.key)}">${h(preset.label)} - ${h(preset.detail)}</option>`)
+                .join('')}</select></label>
+              <div class="columns">
+                <label>消耗 credits<input name="creditUnits" type="number" min="1" value="1"></label>
+                <label>状态<select name="enabled"><option value="true">启用</option><option value="false">关闭</option></select></label>
+              </div>
+              <label>备注<input name="note" placeholder="可选，例如：高清统一价格"></label>
+              <div class="actions"><button class="primary" type="submit">保存价格</button></div>
+            </form>
+          </div>
+          <div id="topupPlanModalBody" class="modal-form-slot" hidden>
+            <form id="topupPlanForm" class="form">
+              <div class="columns">
+                <label>套餐名称<input name="label" placeholder="10 USDT = 200 credits"></label>
+                <label>USDT 金额<input name="amountUsdt" type="number" min="0.01" step="0.01" value="10"></label>
+              </div>
+              <div class="columns">
+                <label>到账 credits<input name="credits" type="number" min="1" value="200"></label>
+                <label>排序<input name="sortOrder" type="number" min="1" value="10"></label>
+              </div>
+              <div class="columns">
+                <label>默认套餐<select name="isDefault"><option value="true">是</option><option value="false">否</option></select></label>
+                <label>状态<select name="enabled"><option value="true">启用</option><option value="false">关闭</option></select></label>
+              </div>
+              <label>备注<input name="note" placeholder="可选"></label>
+              <div class="actions"><button class="primary" type="submit">保存充值套餐</button></div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
 `
 
 const els = {
@@ -514,8 +540,15 @@ const els = {
   profileMessage: mustGet<HTMLDivElement>('profileMessage'),
   resetProfileForm: mustGet<HTMLButtonElement>('resetProfileForm'),
   newProfile: mustGet<HTMLButtonElement>('newProfile'),
+  newCreditPrice: mustGet<HTMLButtonElement>('newCreditPrice'),
+  newTopupPlan: mustGet<HTMLButtonElement>('newTopupPlan'),
   deleteProfileButton: mustGet<HTMLButtonElement>('deleteProfileButton'),
-  providerFormWrap: mustGet<HTMLDivElement>('providerFormWrap'),
+  adminModal: mustGet<HTMLDivElement>('adminModal'),
+  adminModalTitle: mustGet<HTMLHeadingElement>('adminModalTitle'),
+  adminModalClose: mustGet<HTMLButtonElement>('adminModalClose'),
+  profileModalBody: mustGet<HTMLDivElement>('profileModalBody'),
+  creditPriceModalBody: mustGet<HTMLDivElement>('creditPriceModalBody'),
+  topupPlanModalBody: mustGet<HTMLDivElement>('topupPlanModalBody'),
   profilesTable: mustGet<HTMLTableSectionElement>('profilesTable'),
   licensesTable: mustGet<HTMLTableSectionElement>('licensesTable'),
   refreshLicenses: mustGet<HTMLButtonElement>('refreshLicenses'),
@@ -851,11 +884,44 @@ async function refreshAll(): Promise<void> {
   setAdminVisible(true)
 }
 
-function setProfileFormVisible(visible: boolean): void {
-  els.providerFormWrap.hidden = !visible
+function modalTitle(kind: AdminModalKind): string {
+  switch (kind) {
+    case 'profile':
+      return state.editingProfileId ? '编辑服务商' : '新增服务商'
+    case 'creditPrice':
+      return '配置 Credits 价格'
+    case 'topupPlan':
+      return '配置充值套餐'
+    default:
+      return ''
+  }
 }
 
-function resetProfileForm(messageText = '', visible = false): void {
+function openModal(kind: AdminModalKind): void {
+  if (!kind) return
+  state.activeModal = kind
+  els.adminModalTitle.textContent = modalTitle(kind)
+  els.profileModalBody.hidden = kind !== 'profile'
+  els.creditPriceModalBody.hidden = kind !== 'creditPrice'
+  els.topupPlanModalBody.hidden = kind !== 'topupPlan'
+  els.adminModal.hidden = false
+  document.body.classList.add('modal-open')
+  window.setTimeout(() => {
+    const firstInput = els.adminModal.querySelector<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input, select, button')
+    firstInput?.focus()
+  }, 0)
+}
+
+function closeModal(): void {
+  state.activeModal = ''
+  els.adminModal.hidden = true
+  els.profileModalBody.hidden = true
+  els.creditPriceModalBody.hidden = true
+  els.topupPlanModalBody.hidden = true
+  document.body.classList.remove('modal-open')
+}
+
+function resetProfileForm(messageText = '', shouldOpen = false): void {
   state.editingProfileId = ''
   els.profileForm.reset()
   field<HTMLInputElement>(els.profileForm, 'id').value = ''
@@ -865,12 +931,11 @@ function resetProfileForm(messageText = '', visible = false): void {
   field<HTMLSelectElement>(els.profileForm, 'apiMode').value = 'images'
   field<HTMLSelectElement>(els.profileForm, 'status').value = 'active'
   els.deleteProfileButton.hidden = true
-  setProfileFormVisible(visible)
   message(els.profileMessage, messageText)
+  if (shouldOpen) openModal('profile')
 }
 
 function loadProfileForm(profile: ServiceProfile): void {
-  setProfileFormVisible(true)
   state.editingProfileId = profile.id || ''
   field<HTMLInputElement>(els.profileForm, 'id').value = profile.id || ''
   field<HTMLInputElement>(els.profileForm, 'label').value = profile.label || ''
@@ -883,6 +948,51 @@ function loadProfileForm(profile: ServiceProfile): void {
   field<HTMLSelectElement>(els.profileForm, 'status').value = profile.status || 'active'
   els.deleteProfileButton.hidden = !state.editingProfileId
   message(els.profileMessage, '已载入服务商，保存时 API Key 留空会沿用原密钥。')
+  openModal('profile')
+}
+
+function resetCreditPriceForm(): void {
+  els.creditPriceForm.reset()
+  field<HTMLSelectElement>(els.creditPriceForm, 'pricePreset').value = creditPricePresets[0]?.key || ''
+  field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = '1'
+  field<HTMLSelectElement>(els.creditPriceForm, 'enabled').value = 'true'
+  field<HTMLInputElement>(els.creditPriceForm, 'note').value = ''
+  message(els.billingSettingsMessage, '')
+}
+
+function loadCreditPriceForm(price: CreditPrice): void {
+  const preset = creditPricePresetFor(price.serviceCode, price.billingKey)
+  if (preset) {
+    field<HTMLSelectElement>(els.creditPriceForm, 'pricePreset').value = preset.key
+  }
+  field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = String(price.creditUnits)
+  field<HTMLSelectElement>(els.creditPriceForm, 'enabled').value = String(price.enabled)
+  field<HTMLInputElement>(els.creditPriceForm, 'note').value = price.note || ''
+  message(els.billingSettingsMessage, '')
+  openModal('creditPrice')
+}
+
+function resetTopupPlanForm(): void {
+  els.topupPlanForm.reset()
+  field<HTMLInputElement>(els.topupPlanForm, 'amountUsdt').value = '10'
+  field<HTMLInputElement>(els.topupPlanForm, 'credits').value = '200'
+  field<HTMLInputElement>(els.topupPlanForm, 'sortOrder').value = '10'
+  field<HTMLSelectElement>(els.topupPlanForm, 'isDefault').value = 'false'
+  field<HTMLSelectElement>(els.topupPlanForm, 'enabled').value = 'true'
+  field<HTMLInputElement>(els.topupPlanForm, 'note').value = ''
+  message(els.billingSettingsMessage, '')
+}
+
+function loadTopupPlanForm(plan: TopupPlan): void {
+  field<HTMLInputElement>(els.topupPlanForm, 'label').value = plan.label
+  field<HTMLInputElement>(els.topupPlanForm, 'amountUsdt').value = plan.amountUsdt
+  field<HTMLInputElement>(els.topupPlanForm, 'credits').value = String(plan.credits)
+  field<HTMLInputElement>(els.topupPlanForm, 'sortOrder').value = String(plan.sortOrder)
+  field<HTMLSelectElement>(els.topupPlanForm, 'isDefault').value = String(plan.isDefault)
+  field<HTMLSelectElement>(els.topupPlanForm, 'enabled').value = String(plan.enabled)
+  field<HTMLInputElement>(els.topupPlanForm, 'note').value = plan.note || ''
+  message(els.billingSettingsMessage, '')
+  openModal('topupPlan')
 }
 
 async function deleteLicenseIds(ids: string[]): Promise<void> {
@@ -1078,10 +1188,8 @@ function bindEvents(): void {
         note: formValue(els.creditPriceForm, 'note').trim() || preset.defaultNote,
       }
       await api<CreditPrice>('/admin/credit-prices', { method: 'POST', body: JSON.stringify(payload) })
-      els.creditPriceForm.reset()
-      field<HTMLSelectElement>(els.creditPriceForm, 'pricePreset').value = creditPricePresets[0]?.key || ''
-      field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = '1'
       await loadBillingSettings()
+      closeModal()
       message(els.billingSettingsMessage, '价格已保存', 'ok')
     } catch (error) {
       message(els.billingSettingsMessage, (error as Error).message, 'bad')
@@ -1102,11 +1210,8 @@ function bindEvents(): void {
         note: formValue(els.topupPlanForm, 'note').trim(),
       }
       await api<TopupPlan>('/admin/topup-plans', { method: 'POST', body: JSON.stringify(payload) })
-      els.topupPlanForm.reset()
-      field<HTMLInputElement>(els.topupPlanForm, 'amountUsdt').value = '10'
-      field<HTMLInputElement>(els.topupPlanForm, 'credits').value = '200'
-      field<HTMLInputElement>(els.topupPlanForm, 'sortOrder').value = '10'
       await loadBillingSettings()
+      closeModal()
       message(els.billingSettingsMessage, '充值套餐已保存', 'ok')
     } catch (error) {
       message(els.billingSettingsMessage, (error as Error).message, 'bad')
@@ -1175,15 +1280,31 @@ function bindEvents(): void {
       state.editingProfileId = profile.id || payload.id || ''
       field<HTMLInputElement>(els.profileForm, 'id').value = state.editingProfileId
       els.deleteProfileButton.hidden = !state.editingProfileId
-      message(els.profileMessage, '服务商已保存', 'ok')
       await loadProfiles()
+      closeModal()
+      message(els.profileMessage, '服务商已保存', 'ok')
     } catch (error) {
       message(els.profileMessage, (error as Error).message, 'bad')
     }
   })
 
-  els.resetProfileForm.addEventListener('click', () => resetProfileForm('', false))
+  els.resetProfileForm.addEventListener('click', () => resetProfileForm('', true))
   els.newProfile.addEventListener('click', () => resetProfileForm('正在新增服务商，保存后会自动生成内部 ID。', true))
+  els.newCreditPrice.addEventListener('click', () => {
+    resetCreditPriceForm()
+    openModal('creditPrice')
+  })
+  els.newTopupPlan.addEventListener('click', () => {
+    resetTopupPlanForm()
+    openModal('topupPlan')
+  })
+  els.adminModalClose.addEventListener('click', closeModal)
+  els.adminModal.addEventListener('click', (event) => {
+    if (event.target === els.adminModal) closeModal()
+  })
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.activeModal) closeModal()
+  })
 
   els.deleteProfileButton.addEventListener('click', async () => {
     const id = state.editingProfileId || formValue(els.profileForm, 'id').trim()
@@ -1192,9 +1313,10 @@ function bindEvents(): void {
     els.deleteProfileButton.disabled = true
     try {
       await api(`/admin/service-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' })
-      message(els.profileMessage, '服务商已删除', 'ok')
-      resetProfileForm('服务商已删除')
       await loadProfiles()
+      closeModal()
+      resetProfileForm('')
+      message(els.profileMessage, '服务商已删除', 'ok')
     } catch (error) {
       message(els.profileMessage, (error as Error).message, 'bad')
     } finally {
@@ -1279,28 +1401,14 @@ async function handleDocumentClick(event: MouseEvent): Promise<void> {
   if (target.dataset.editCreditPrice) {
     const price = state.creditPrices.find((item) => item.id === target.dataset.editCreditPrice)
     if (price) {
-      const preset = creditPricePresetFor(price.serviceCode, price.billingKey)
-      if (preset) {
-        field<HTMLSelectElement>(els.creditPriceForm, 'pricePreset').value = preset.key
-      }
-      field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = String(price.creditUnits)
-      field<HTMLSelectElement>(els.creditPriceForm, 'enabled').value = String(price.enabled)
-      field<HTMLInputElement>(els.creditPriceForm, 'note').value = price.note || ''
-      message(els.billingSettingsMessage, '已载入价格，修改后保存。')
+      loadCreditPriceForm(price)
     }
   }
 
   if (target.dataset.editTopupPlan) {
     const plan = state.topupPlans.find((item) => item.id === target.dataset.editTopupPlan)
     if (plan) {
-      field<HTMLInputElement>(els.topupPlanForm, 'label').value = plan.label
-      field<HTMLInputElement>(els.topupPlanForm, 'amountUsdt').value = plan.amountUsdt
-      field<HTMLInputElement>(els.topupPlanForm, 'credits').value = String(plan.credits)
-      field<HTMLInputElement>(els.topupPlanForm, 'sortOrder').value = String(plan.sortOrder)
-      field<HTMLSelectElement>(els.topupPlanForm, 'isDefault').value = String(plan.isDefault)
-      field<HTMLSelectElement>(els.topupPlanForm, 'enabled').value = String(plan.enabled)
-      field<HTMLInputElement>(els.topupPlanForm, 'note').value = plan.note || ''
-      message(els.billingSettingsMessage, '已载入充值套餐，修改后保存。')
+      loadTopupPlanForm(plan)
     }
   }
 
