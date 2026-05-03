@@ -400,8 +400,7 @@ app.innerHTML = `
         <div class="body billing-settings">
           <div class="settings-table-block">
             <div class="subsection-head">
-              <h3>Credits 价格</h3>
-              <button id="newCreditPrice" type="button">配置价格</button>
+              <h3>价格配置</h3>
             </div>
             <div class="table-wrap compact-table">
               <table>
@@ -540,7 +539,6 @@ const els = {
   profileMessage: mustGet<HTMLDivElement>('profileMessage'),
   resetProfileForm: mustGet<HTMLButtonElement>('resetProfileForm'),
   newProfile: mustGet<HTMLButtonElement>('newProfile'),
-  newCreditPrice: mustGet<HTMLButtonElement>('newCreditPrice'),
   newTopupPlan: mustGet<HTMLButtonElement>('newTopupPlan'),
   deleteProfileButton: mustGet<HTMLButtonElement>('deleteProfileButton'),
   adminModal: mustGet<HTMLDivElement>('adminModal'),
@@ -951,15 +949,6 @@ function loadProfileForm(profile: ServiceProfile): void {
   openModal('profile')
 }
 
-function resetCreditPriceForm(): void {
-  els.creditPriceForm.reset()
-  field<HTMLSelectElement>(els.creditPriceForm, 'pricePreset').value = creditPricePresets[0]?.key || ''
-  field<HTMLInputElement>(els.creditPriceForm, 'creditUnits').value = '1'
-  field<HTMLSelectElement>(els.creditPriceForm, 'enabled').value = 'true'
-  field<HTMLInputElement>(els.creditPriceForm, 'note').value = ''
-  message(els.billingSettingsMessage, '')
-}
-
 function loadCreditPriceForm(price: CreditPrice): void {
   const preset = creditPricePresetFor(price.serviceCode, price.billingKey)
   if (preset) {
@@ -1290,10 +1279,6 @@ function bindEvents(): void {
 
   els.resetProfileForm.addEventListener('click', () => resetProfileForm('', true))
   els.newProfile.addEventListener('click', () => resetProfileForm('正在新增服务商，保存后会自动生成内部 ID。', true))
-  els.newCreditPrice.addEventListener('click', () => {
-    resetCreditPriceForm()
-    openModal('creditPrice')
-  })
   els.newTopupPlan.addEventListener('click', () => {
     resetTopupPlanForm()
     openModal('topupPlan')
