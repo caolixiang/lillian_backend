@@ -218,6 +218,38 @@ func TestSupportedServiceCreditPriceOnlyAllowsBusinessBackedImageRows(t *testing
 	}
 }
 
+func TestPublicTopupPlansRouteExistsForFrontendSelection(t *testing.T) {
+	server := New(config.Config{}, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/topup-plans", nil)
+	rec := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusNotFound {
+		t.Fatalf("public topup plans route is not registered")
+	}
+}
+
+func TestPublicCreditTopupPlansExposeFrontendFieldsOnly(t *testing.T) {
+	plans := publicCreditTopupPlans([]creditTopupPlan{
+		{ID: "plan-10", Label: "10 USDT", AmountUSDT: "10.00", Credits: 200, IsDefault: true, Enabled: true, SortOrder: 10, Note: "internal"},
+	})
+	if len(plans) != 1 {
+		t.Fatalf("plans = %#v", plans)
+	}
+	plan := plans[0]
+	for _, key := range []string{"id", "label", "amountUsdt", "credits", "isDefault"} {
+		if _, ok := plan[key]; !ok {
+			t.Fatalf("public plan missing %q: %#v", key, plan)
+		}
+	}
+	for _, key := range []string{"enabled", "sortOrder", "note", "createdAt", "updatedAt"} {
+		if _, ok := plan[key]; ok {
+			t.Fatalf("public plan leaked admin field %q: %#v", key, plan)
+		}
+	}
+}
+
 func md5Hex(value string) string {
 	sum := md5.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])

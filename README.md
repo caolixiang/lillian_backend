@@ -32,6 +32,7 @@ Implemented admin/runtime endpoints:
 - `POST /api/wallets/restore`
 - `GET /api/wallets/:address`
 - `POST /api/wallets/redeem`
+- `GET /api/topup-plans`
 - `POST /api/wallets/:address/topups`
 - `POST /api/payments/epusdt/callback`
 - `POST /api/tasks`
@@ -44,7 +45,8 @@ Frontend wallet flow:
 - `POST /api/wallets/restore` accepts `{ "recoveryCode": "LIL-WAL-..." }` and returns `{ wallet }`.
 - `GET /api/wallets/:address` returns `{ wallet }` for balance refresh before/after generation.
 - `POST /api/wallets/redeem` accepts `{ "walletAddress": "0x...", "code": "LIL-..." }` and returns `{ wallet }`.
-- `POST /api/wallets/:address/topups` creates an EPUSDT/GMPay recharge order from the default enabled top-up plan and returns `{ checkoutUrl, order, wallet }`.
+- `GET /api/topup-plans` returns enabled credit recharge plans as `{ topupPlans: [{ id, label, amountUsdt, credits, isDefault }] }` for frontend selection.
+- `POST /api/wallets/:address/topups` creates an EPUSDT/GMPay recharge order from the requested `{ "planId": "..." }`, or from the default enabled top-up plan when omitted, and returns `{ checkoutUrl, order, wallet }`.
 - `POST /api/tasks` accepts `walletAddress` either as a top-level field or inside `params`. The accepted response includes `wallet`, `serviceCode`, and `remainingCredits`.
 - `GET /api/tasks/:id?walletAddress=0x...` returns task status plus `walletAddress`, `wallet`, `serviceCode`, `creditReserved`, and `creditCharged` so the SPA can refresh local wallet state without a second balance call.
 - `GET /api/tasks/:id/images/:index?walletAddress=0x...` requires the same wallet address for private image access.

@@ -62,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/wallets/restore", s.handleRestoreWallet)
 	r.Post("/api/wallets/redeem", s.handleRedeemWallet)
 	r.Get("/api/wallets/{address}", s.handleGetWallet)
+	r.Get("/api/topup-plans", s.handleListPublicTopupPlans)
 	r.Post("/api/wallets/{address}/topups", s.handleCreateWalletTopup)
 	r.Post("/api/payments/epusdt/callback", s.handleEPUSDTCallback)
 	r.Post("/api/tasks", s.handleCreateTask)

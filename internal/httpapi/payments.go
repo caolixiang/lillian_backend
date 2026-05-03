@@ -322,6 +322,22 @@ func (s *Server) handleEPUSDTCallback(w http.ResponseWriter, r *http.Request) {
 	writePlainOK(w)
 }
 
+func (s *Server) handleListPublicTopupPlans(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDatabase(w) {
+		return
+	}
+	ctx, cancel := contextWithTimeout(r, 5*time.Second)
+	defer cancel()
+	plans, err := s.enabledCreditTopupPlans(ctx)
+	if err != nil {
+		errorJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"topupPlans": publicCreditTopupPlans(plans),
+	})
+}
+
 func (s *Server) handleAdminListBillingSettings(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requireDatabase(w) {
 		return
@@ -340,7 +356,7 @@ func (s *Server) handleAdminListBillingSettings(w http.ResponseWriter, r *http.R
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"creditPrices": publicServiceCreditPrices(prices),
-		"topupPlans":   publicCreditTopupPlans(plans),
+		"topupPlans":   adminCreditTopupPlans(plans),
 	})
 }
 
@@ -617,6 +633,39 @@ func (s *Server) creditTopupPlans(ctx context.Context) ([]creditTopupPlan, error
 	return plans, rows.Err()
 }
 
+func (s *Server) enabledCreditTopupPlans(ctx context.Context) ([]creditTopupPlan, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, label, amount_usdt::text, credits, is_default, enabled, sort_order, note, created_at, updated_at
+		FROM credit_topup_plans
+		WHERE enabled = true
+		ORDER BY is_default DESC, sort_order, id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	plans := []creditTopupPlan{}
+	for rows.Next() {
+		var plan creditTopupPlan
+		if err := rows.Scan(
+			&plan.ID,
+			&plan.Label,
+			&plan.AmountUSDT,
+			&plan.Credits,
+			&plan.IsDefault,
+			&plan.Enabled,
+			&plan.SortOrder,
+			&plan.Note,
+			&plan.CreatedAt,
+			&plan.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		plans = append(plans, plan)
+	}
+	return plans, rows.Err()
+}
+
 func (s *Server) serviceCreditPrices(ctx context.Context) ([]serviceCreditPrice, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, service_code, billing_key, credit_units, enabled, note, created_at, updated_at
@@ -829,6 +878,24 @@ func publicCreditTopupPlans(plans []creditTopupPlan) []map[string]any {
 }
 
 func publicCreditTopupPlan(plan creditTopupPlan) map[string]any {
+	return map[string]any{
+		"id":         plan.ID,
+		"label":      plan.Label,
+		"amountUsdt": plan.AmountUSDT,
+		"credits":    plan.Credits,
+		"isDefault":  plan.IsDefault,
+	}
+}
+
+func adminCreditTopupPlans(plans []creditTopupPlan) []map[string]any {
+	result := make([]map[string]any, 0, len(plans))
+	for _, plan := range plans {
+		result = append(result, adminCreditTopupPlan(plan))
+	}
+	return result
+}
+
+func adminCreditTopupPlan(plan creditTopupPlan) map[string]any {
 	return map[string]any{
 		"id":         plan.ID,
 		"label":      plan.Label,
