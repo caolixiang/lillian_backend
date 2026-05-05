@@ -501,9 +501,9 @@ func isWalletAddress(address string) bool {
 func serviceLabel(serviceCode string) string {
 	switch serviceCode {
 	case serviceCodeImage2SD:
-		return "标清"
+		return "SD 1K"
 	case serviceCodeImage2HD:
-		return "HD 2K/4K"
+		return "HD EK"
 	default:
 		return serviceCode
 	}

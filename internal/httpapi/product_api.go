@@ -45,6 +45,14 @@ type licenseRow struct {
 	UpdatedAt        time.Time
 }
 
+type adminLicenseListFilters struct {
+	SearchHash  string
+	ServiceCode string
+	Redeemed    string
+	Limit       int
+	Offset      int
+}
+
 type serviceProfileRow struct {
 	ID               string
 	Label            string
@@ -151,35 +159,24 @@ func (s *Server) handleAdminListLicenses(w http.ResponseWriter, r *http.Request)
 		offset = 0
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	searchHash := ""
+	if search != "" {
+		searchHash = s.hashSecret(search)
+	}
+	serviceCode := adminLicenseServiceFilter(r.URL.Query().Get("serviceCode"))
+	redeemed := adminLicenseRedeemedFilter(r.URL.Query().Get("redeemed"))
 	queryLimit := limit + 1
 	ctx, cancel := contextWithTimeout(r, 5*time.Second)
 	defer cancel()
 
-	var rows pgx.Rows
-	var err error
-	if search != "" {
-		rows, err = s.db.Query(ctx, `
-			SELECT l.id, l.key_ciphertext, l.service_code, l.credits, l.max_concurrent,
-				l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
-				w.address, l.note, l.created_at, l.updated_at
-			FROM license_keys l
-			LEFT JOIN wallets w ON w.id = l.redeemed_wallet_id
-			WHERE l.status <> 'deleted' AND l.key_hash = $1
-			ORDER BY l.created_at DESC
-			LIMIT $2 OFFSET $3
-		`, s.hashSecret(search), queryLimit, offset)
-	} else {
-		rows, err = s.db.Query(ctx, `
-			SELECT l.id, l.key_ciphertext, l.service_code, l.credits, l.max_concurrent,
-				l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
-				w.address, l.note, l.created_at, l.updated_at
-			FROM license_keys l
-			LEFT JOIN wallets w ON w.id = l.redeemed_wallet_id
-			WHERE l.status <> 'deleted'
-			ORDER BY l.created_at DESC
-			LIMIT $1 OFFSET $2
-		`, queryLimit, offset)
-	}
+	query, args := adminLicenseListQuery(adminLicenseListFilters{
+		SearchHash:  searchHash,
+		ServiceCode: serviceCode,
+		Redeemed:    redeemed,
+		Limit:       queryLimit,
+		Offset:      offset,
+	})
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -207,12 +204,66 @@ func (s *Server) handleAdminListLicenses(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"licenses": licenses,
 		"page": map[string]any{
-			"limit":   limit,
-			"offset":  offset,
-			"hasMore": seen > limit,
-			"search":  search,
+			"limit":       limit,
+			"offset":      offset,
+			"hasMore":     seen > limit,
+			"search":      search,
+			"serviceCode": serviceCode,
+			"redeemed":    redeemed,
 		},
 	})
+}
+
+func adminLicenseListQuery(filters adminLicenseListFilters) (string, []any) {
+	where := []string{"l.status <> 'deleted'"}
+	args := []any{}
+	if filters.SearchHash != "" {
+		args = append(args, filters.SearchHash)
+		where = append(where, fmt.Sprintf("l.key_hash = $%d", len(args)))
+	}
+	if filters.ServiceCode != "" {
+		args = append(args, filters.ServiceCode)
+		where = append(where, fmt.Sprintf("l.service_code = $%d", len(args)))
+	}
+	switch filters.Redeemed {
+	case "used":
+		where = append(where, "l.redeemed_wallet_id IS NOT NULL")
+	case "unused":
+		where = append(where, "l.redeemed_wallet_id IS NULL")
+	}
+	args = append(args, filters.Limit)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
+	args = append(args, filters.Offset)
+	offsetPlaceholder := fmt.Sprintf("$%d", len(args))
+	query := `
+			SELECT l.id, l.key_ciphertext, l.service_code, l.credits, l.max_concurrent,
+				l.status, l.expires_at, l.redeemed_at, l.redeemed_wallet_id,
+				w.address, l.note, l.created_at, l.updated_at
+			FROM license_keys l
+			LEFT JOIN wallets w ON w.id = l.redeemed_wallet_id
+			WHERE ` + strings.Join(where, " AND ") + `
+			ORDER BY l.created_at DESC
+			LIMIT ` + limitPlaceholder + ` OFFSET ` + offsetPlaceholder
+	return query, args
+}
+
+func adminLicenseServiceFilter(value string) string {
+	value = strings.TrimSpace(value)
+	switch value {
+	case serviceCodeImage2SD, serviceCodeImage2HD:
+		return value
+	default:
+		return ""
+	}
+}
+
+func adminLicenseRedeemedFilter(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "used", "unused":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
 }
 
 func (s *Server) handleAdminUpdateLicense(w http.ResponseWriter, r *http.Request) {

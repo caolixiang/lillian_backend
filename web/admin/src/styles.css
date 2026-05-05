@@ -448,6 +448,10 @@ body.modal-open {
   justify-content: flex-end;
 }
 
+.filter-field {
+  width: 128px;
+}
+
 .page-size {
   display: flex;
   align-items: center;
@@ -476,6 +480,10 @@ table {
   width: 100%;
   min-width: 780px;
   border-collapse: collapse;
+}
+
+.licenses-table {
+  min-width: 760px;
 }
 
 th,
@@ -592,30 +600,6 @@ code {
   background: #fff8ed;
 }
 
-.icon-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  font-weight: 800;
-  line-height: 1;
-}
-
-.icon-status.ok {
-  color: var(--ok);
-  border-color: #bbd7c2;
-  background: #f0f8f2;
-}
-
-.icon-status.bad {
-  color: var(--bad);
-  border-color: #efc7c7;
-  background: #fff5f5;
-}
-
 .created-list {
   display: grid;
   gap: 8px;
@@ -727,6 +711,10 @@ code {
 
   .toolbar-actions {
     justify-content: flex-start;
+  }
+
+  .filter-field {
+    width: min(180px, 100%);
   }
 
   .page-size {

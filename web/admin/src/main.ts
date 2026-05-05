@@ -157,6 +157,8 @@ interface AdminState {
   licenseOffset: number
   licenseHasMore: boolean
   licenseSearch: string
+  licenseServiceFilter: string
+  licenseRedeemedFilter: string
   walletLookupAddress: string
   walletLookup: AdminWalletLookupResponse | null
   runtimeSettings: RuntimeSettings
@@ -179,6 +181,8 @@ const state: AdminState = {
   licenseOffset: 0,
   licenseHasMore: false,
   licenseSearch: '',
+  licenseServiceFilter: '',
+  licenseRedeemedFilter: '',
   walletLookupAddress: '',
   walletLookup: null,
   runtimeSettings: {
@@ -195,19 +199,19 @@ const state: AdminState = {
 const creditPricePresets: CreditPricePreset[] = [
   {
     key: 'image-2-sd:1K',
-    label: '标清 1K',
+    label: 'SD 1K',
     detail: 'image-2-sd / 1K',
     serviceCode: 'image-2-sd',
     billingKey: '1K',
-    defaultNote: '默认标清 1K credits 价格',
+    defaultNote: '默认 SD 1K credits 价格',
   },
   {
     key: 'image-2-hd:HD',
-    label: '高清 2K/4K',
+    label: 'HD EK',
     detail: 'image-2-hd / HD',
     serviceCode: 'image-2-hd',
     billingKey: 'HD',
-    defaultNote: '默认高清 2K/4K credits 价格',
+    defaultNote: '默认 HD EK credits 价格',
   },
 ]
 
@@ -257,7 +261,7 @@ app.innerHTML = `
           <div class="body">
             <form id="licenseForm" class="form">
               <div class="columns">
-                <label>服务<select name="serviceCode"><option value="image-2-sd">标清 image-2-sd</option><option value="image-2-hd">HD image-2-hd</option></select></label>
+                <label>服务<select name="serviceCode"><option value="image-2-sd">SD image-2-sd</option><option value="image-2-hd">HD image-2-hd</option></select></label>
                 <label>数量<input name="count" type="number" min="1" max="100" value="1"></label>
               </div>
               <div class="columns">
@@ -298,14 +302,16 @@ app.innerHTML = `
             <form id="licenseSearchForm" class="list-toolbar">
               <label class="search-field">搜索兑换码<input id="licenseSearch" name="q" type="search" autocomplete="off" placeholder="输入完整兑换码"></label>
               <div class="toolbar-actions">
+                <label class="filter-field">类型<select id="licenseServiceFilter"><option value="">全部</option><option value="image-2-sd">SD 1K</option><option value="image-2-hd">HD EK</option></select></label>
+                <label class="filter-field">使用<select id="licenseRedeemedFilter"><option value="">全部</option><option value="unused">未使用</option><option value="used">已使用</option></select></label>
                 <button type="submit">搜索</button>
                 <button id="clearLicenseSearch" type="button">清空</button>
                 <label class="page-size">每页<select id="licensePageSize"><option value="20">20</option><option value="50">50</option></select></label>
               </div>
             </form>
             <div class="table-wrap">
-              <table>
-                <thead><tr><th class="select-cell"><input id="selectAllLicenses" type="checkbox" aria-label="全选兑换码"></th><th>兑换码</th><th>服务</th><th>次数</th><th>并发</th><th>状态</th><th>兑换钱包</th><th>备注 / 发放对象</th><th>操作</th></tr></thead>
+              <table class="licenses-table">
+                <thead><tr><th class="select-cell"><input id="selectAllLicenses" type="checkbox" aria-label="全选兑换码"></th><th>兑换码</th><th>服务</th><th>次数</th><th>并发</th><th>兑换钱包</th><th>备注 / 发放对象</th><th>操作</th></tr></thead>
                 <tbody id="licensesTable"></tbody>
               </table>
             </div>
@@ -514,6 +520,8 @@ const els = {
   licenseSearchForm: mustGet<HTMLFormElement>('licenseSearchForm'),
   licenseSearch: mustGet<HTMLInputElement>('licenseSearch'),
   clearLicenseSearch: mustGet<HTMLButtonElement>('clearLicenseSearch'),
+  licenseServiceFilter: mustGet<HTMLSelectElement>('licenseServiceFilter'),
+  licenseRedeemedFilter: mustGet<HTMLSelectElement>('licenseRedeemedFilter'),
   licensePageSize: mustGet<HTMLSelectElement>('licensePageSize'),
   licensePageInfo: mustGet<HTMLSpanElement>('licensePageInfo'),
   prevLicensePage: mustGet<HTMLButtonElement>('prevLicensePage'),
@@ -665,6 +673,18 @@ function compactID(value: string): string {
   return `${text.slice(0, 8)}…${text.slice(-6)}`
 }
 
+function compactLicenseKey(value: string): string {
+  const text = String(value || '')
+  if (text.length <= 10) return text
+  return `${text.slice(0, 3)}…${text.slice(-4)}`
+}
+
+function compactWalletAddress(value: string): string {
+  const text = String(value || '')
+  if (text.length <= 14) return text
+  return `${text.slice(0, 6)}…${text.slice(-5)}`
+}
+
 function formatDateTime(value?: string | null): string {
   if (!value) return '-'
   const ts = Date.parse(value)
@@ -675,20 +695,6 @@ function formatDateTime(value?: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(ts))
-}
-
-function isExpired(value?: string | null): boolean {
-  if (!value) return false
-  const ts = Date.parse(value)
-  return Number.isFinite(ts) && ts <= Date.now()
-}
-
-function availabilityStatus(license: LicenseRecord): string {
-  let label = '可用'
-  if (license.status && license.status !== 'active') label = '不可用'
-  else if (isExpired(license.expires_at)) label = '已过期'
-  const available = label === '可用'
-  return `<span class="icon-status ${available ? 'ok' : 'bad'}" title="${h(label)}" aria-label="${h(label)}">${available ? '✓' : '×'}</span>`
 }
 
 function renderCreatedKeys(): void {
@@ -710,17 +716,20 @@ function renderLicenses(): void {
         const checked = state.selectedLicenseIds.includes(license.id) ? ' checked' : ''
         const note = license.note || ''
         const redeemedWallet = license.redeemedWalletAddress || license.redeemedWalletId || ''
+        const walletHtml = redeemedWallet
+          ? `<div class="code-cell"><code title="${h(redeemedWallet)}">${h(compactWalletAddress(redeemedWallet))}</code><button class="small" type="button" data-copy-wallet="${h(redeemedWallet)}">复制</button></div>`
+          : '<span class="pill">未使用</span>'
         const editingNote = state.editingLicenseNoteId === license.id
         const noteHtml = editingNote
           ? `<div class="note-edit"><input data-license-note-input="${h(license.id)}" value="${h(note)}" placeholder="备注 / 发放对象"><div class="note-edit-actions"><button class="small primary" type="button" data-save-license-note="${h(license.id)}">确定</button><button class="small" type="button" data-cancel-license-note="${h(license.id)}">取消</button></div></div>`
           : `<div class="note-view"><span class="note-text${note ? '' : ' note-empty'}">${h(note || '未填写')}</span><button class="small" type="button" data-edit-license-note="${h(license.id)}">编辑</button></div>`
         return `<tr><td class="select-cell"><input type="checkbox" data-license-select="${h(license.id)}"${checked} aria-label="选择兑换码"></td><td><div class="code-cell">${
           key
-            ? `<code>${h(key)}</code><button class="small" type="button" data-copy-license="${h(key)}">复制</button>`
+            ? `<code title="${h(key)}">${h(compactLicenseKey(key))}</code><button class="small" type="button" data-copy-license="${h(key)}">复制</button>`
             : '<span class="pill warn">旧数据不可查看</span>'
-        }</div></td><td>${h(serviceLabel(license.serviceCode))}</td><td>${h(license.credits)}</td><td>${h(license.max_concurrent)}</td><td>${availabilityStatus(license)}</td><td>${redeemedWallet ? `<code>${h(redeemedWallet)}</code>` : '<span class="pill">未兑换</span>'}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
+        }</div></td><td>${h(serviceLabel(license.serviceCode))}</td><td>${h(license.credits)}</td><td>${h(license.max_concurrent)}</td><td>${walletHtml}</td><td class="note-cell">${noteHtml}</td><td><button class="small danger" type="button" data-delete-license="${h(license.id)}">删除</button></td></tr>`
       })
-      .join('') || '<tr><td colspan="9">暂无兑换码</td></tr>'
+      .join('') || '<tr><td colspan="8">暂无兑换码</td></tr>'
 
   const selectedCount = state.selectedLicenseIds.length
   els.deleteSelectedLicenses.disabled = selectedCount === 0
@@ -734,8 +743,14 @@ function renderLicensePager(): void {
   const page = Math.floor(state.licenseOffset / state.licensePageSize) + 1
   const start = state.licenses.length ? state.licenseOffset + 1 : 0
   const end = state.licenseOffset + state.licenses.length
-  const searchSuffix = state.licenseSearch ? ' · 搜索结果' : ''
+  const filters = []
+  if (state.licenseSearch) filters.push('搜索结果')
+  if (state.licenseServiceFilter) filters.push(serviceLabel(state.licenseServiceFilter))
+  if (state.licenseRedeemedFilter) filters.push(state.licenseRedeemedFilter === 'used' ? '已使用' : '未使用')
+  const searchSuffix = filters.length ? ` · ${filters.join(' / ')}` : ''
   els.licensePageSize.value = String(state.licensePageSize)
+  els.licenseServiceFilter.value = state.licenseServiceFilter
+  els.licenseRedeemedFilter.value = state.licenseRedeemedFilter
   if (document.activeElement !== els.licenseSearch) {
     els.licenseSearch.value = state.licenseSearch
   }
@@ -831,6 +846,12 @@ async function loadLicenses(): Promise<void> {
   })
   if (state.licenseSearch) {
     params.set('q', state.licenseSearch)
+  }
+  if (state.licenseServiceFilter) {
+    params.set('serviceCode', state.licenseServiceFilter)
+  }
+  if (state.licenseRedeemedFilter) {
+    params.set('redeemed', state.licenseRedeemedFilter)
   }
   const data = await api<LicenseListResponse>(`/admin/licenses?${params.toString()}`)
   if ((data.licenses || []).length === 0 && state.licenseOffset > 0) {
@@ -1049,18 +1070,24 @@ function bindEvents(): void {
   els.licenseSearchForm.addEventListener('submit', (event) => {
     event.preventDefault()
     state.licenseSearch = els.licenseSearch.value.trim()
+    state.licenseServiceFilter = els.licenseServiceFilter.value
+    state.licenseRedeemedFilter = els.licenseRedeemedFilter.value
     state.licenseOffset = 0
     state.selectedLicenseIds = []
     state.lastSelectedLicenseId = ''
     loadLicenses()
-      .then(() => message(els.licenseMessage, state.licenseSearch ? '搜索完成' : '兑换码已刷新', 'ok'))
+      .then(() => message(els.licenseMessage, licenseFiltersActive() ? '筛选完成' : '兑换码已刷新', 'ok'))
       .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
   })
 
   els.clearLicenseSearch.addEventListener('click', () => {
-    if (!state.licenseSearch && !els.licenseSearch.value.trim()) return
+    if (!licenseFiltersActive() && !els.licenseSearch.value.trim() && !els.licenseServiceFilter.value && !els.licenseRedeemedFilter.value) return
     els.licenseSearch.value = ''
+    els.licenseServiceFilter.value = ''
+    els.licenseRedeemedFilter.value = ''
     state.licenseSearch = ''
+    state.licenseServiceFilter = ''
+    state.licenseRedeemedFilter = ''
     state.licenseOffset = 0
     state.selectedLicenseIds = []
     state.lastSelectedLicenseId = ''
@@ -1076,6 +1103,26 @@ function bindEvents(): void {
     state.selectedLicenseIds = []
     state.lastSelectedLicenseId = ''
     loadLicenses().catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.licenseServiceFilter.addEventListener('change', () => {
+    state.licenseServiceFilter = els.licenseServiceFilter.value
+    state.licenseOffset = 0
+    state.selectedLicenseIds = []
+    state.lastSelectedLicenseId = ''
+    loadLicenses()
+      .then(() => message(els.licenseMessage, licenseFiltersActive() ? '筛选完成' : '兑换码已刷新', 'ok'))
+      .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
+  })
+
+  els.licenseRedeemedFilter.addEventListener('change', () => {
+    state.licenseRedeemedFilter = els.licenseRedeemedFilter.value
+    state.licenseOffset = 0
+    state.selectedLicenseIds = []
+    state.lastSelectedLicenseId = ''
+    loadLicenses()
+      .then(() => message(els.licenseMessage, licenseFiltersActive() ? '筛选完成' : '兑换码已刷新', 'ok'))
+      .catch((error: Error) => message(els.licenseMessage, error.message, 'bad'))
   })
 
   els.prevLicensePage.addEventListener('click', () => {
@@ -1231,6 +1278,8 @@ function bindEvents(): void {
       const data = await api<CreateLicenseResponse>('/admin/licenses', { method: 'POST', body: JSON.stringify(payload) })
       state.createdKeys = data.keys || []
       state.licenseSearch = ''
+      state.licenseServiceFilter = ''
+      state.licenseRedeemedFilter = ''
       state.licenseOffset = 0
       state.selectedLicenseIds = []
       state.lastSelectedLicenseId = ''
@@ -1315,8 +1364,13 @@ function bindEvents(): void {
 }
 
 function serviceLabel(value: string): string {
-  if (value === 'image-2-hd' || value === 'hd') return 'HD 2K/4K'
-  return '标清 1K'
+  if (value === 'image-2-hd' || value === 'hd') return 'HD EK'
+  if (value === 'image-2-sd' || value === 'sd' || value === '1k') return 'SD 1K'
+  return value || '-'
+}
+
+function licenseFiltersActive(): boolean {
+  return Boolean(state.licenseSearch || state.licenseServiceFilter || state.licenseRedeemedFilter)
 }
 
 function creditPricePresetByKey(key: string): CreditPricePreset | undefined {

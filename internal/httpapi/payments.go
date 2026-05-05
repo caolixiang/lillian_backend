@@ -382,7 +382,7 @@ func (s *Server) handleAdminUpsertCreditPrice(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !supportedServiceCreditPrice(serviceCode, billingKey) {
-		errorJSON(w, http.StatusBadRequest, "当前仅支持配置标清 1K 和高清 2K/4K 的 credits 价格")
+		errorJSON(w, http.StatusBadRequest, "当前仅支持配置 SD 1K 和 HD EK 的 credits 价格")
 		return
 	}
 	id := strings.TrimSpace(body.ID)

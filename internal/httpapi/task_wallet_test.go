@@ -131,7 +131,7 @@ func TestPublicTaskIncludesWalletSnapshotForFrontendRefresh(t *testing.T) {
 }
 
 func TestServiceLabelReturnsUserFacingHDLabel(t *testing.T) {
-	if got := serviceLabel(serviceCodeImage2HD); got != "HD 2K/4K" {
+	if got := serviceLabel(serviceCodeImage2HD); got != "HD EK" {
 		t.Fatalf("serviceLabel(%q) = %q", serviceCodeImage2HD, got)
 	}
 }
