@@ -207,11 +207,11 @@ const creditPricePresets: CreditPricePreset[] = [
   },
   {
     key: 'image-2-hd:HD',
-    label: 'HD EK',
+    label: 'HD 2K/4K',
     detail: 'image-2-hd / HD',
     serviceCode: 'image-2-hd',
     billingKey: 'HD',
-    defaultNote: '默认 HD EK credits 价格',
+    defaultNote: '默认 HD 2K/4K credits 价格',
   },
 ]
 
@@ -302,7 +302,7 @@ app.innerHTML = `
             <form id="licenseSearchForm" class="list-toolbar">
               <label class="search-field">搜索兑换码<input id="licenseSearch" name="q" type="search" autocomplete="off" placeholder="输入完整兑换码"></label>
               <div class="toolbar-actions">
-                <label class="filter-field">类型<select id="licenseServiceFilter"><option value="">全部</option><option value="image-2-sd">SD 1K</option><option value="image-2-hd">HD EK</option></select></label>
+                <label class="filter-field">类型<select id="licenseServiceFilter"><option value="">全部</option><option value="image-2-sd">SD 1K</option><option value="image-2-hd">HD 2K/4K</option></select></label>
                 <label class="filter-field">使用<select id="licenseRedeemedFilter"><option value="">全部</option><option value="unused">未使用</option><option value="used">已使用</option></select></label>
                 <button type="submit">搜索</button>
                 <button id="clearLicenseSearch" type="button">清空</button>
@@ -1364,7 +1364,7 @@ function bindEvents(): void {
 }
 
 function serviceLabel(value: string): string {
-  if (value === 'image-2-hd' || value === 'hd') return 'HD EK'
+  if (value === 'image-2-hd' || value === 'hd') return 'HD 2K/4K'
   if (value === 'image-2-sd' || value === 'sd' || value === '1k') return 'SD 1K'
   return value || '-'
 }

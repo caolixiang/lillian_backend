@@ -503,7 +503,7 @@ func serviceLabel(serviceCode string) string {
 	case serviceCodeImage2SD:
 		return "SD 1K"
 	case serviceCodeImage2HD:
-		return "HD EK"
+		return "HD 2K/4K"
 	default:
 		return serviceCode
 	}
