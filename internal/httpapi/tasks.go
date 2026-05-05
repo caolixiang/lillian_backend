@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -825,7 +826,8 @@ func (s *Server) callImageService(ctx context.Context, profile serviceProfileRow
 			if err != nil {
 				return imageServiceResult{}, err
 			}
-			part, err := writer.CreateFormFile("image[]", fmt.Sprintf("input-%d.%s", i+1, imageExt(contentType)))
+			contentType = normalizeImageContentType(bytes, contentType)
+			part, err := createImageFormFile(writer, "image[]", fmt.Sprintf("input-%d.%s", i+1, imageExt(contentType)), contentType)
 			if err != nil {
 				return imageServiceResult{}, err
 			}
@@ -834,11 +836,12 @@ func (s *Server) callImageService(ctx context.Context, profile serviceProfileRow
 			}
 		}
 		if payload.MaskDataURL != "" {
-			bytes, _, err := dataURLBytes(payload.MaskDataURL)
+			bytes, contentType, err := dataURLBytes(payload.MaskDataURL)
 			if err != nil {
 				return imageServiceResult{}, err
 			}
-			part, err := writer.CreateFormFile("mask", "mask.png")
+			contentType = normalizeImageContentType(bytes, contentType)
+			part, err := createImageFormFile(writer, "mask", "mask."+imageExt(contentType), contentType)
 			if err != nil {
 				return imageServiceResult{}, err
 			}
@@ -1418,6 +1421,25 @@ func dataURLBytes(value string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	return []byte(decoded), contentType, nil
+}
+
+func createImageFormFile(writer *multipart.Writer, fieldName, fileName, contentType string) (io.Writer, error) {
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, fieldName, fileName))
+	header.Set("Content-Type", contentType)
+	return writer.CreatePart(header)
+}
+
+func normalizeImageContentType(bytes []byte, contentType string) string {
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if strings.HasPrefix(contentType, "image/") {
+		return contentType
+	}
+	detected := strings.ToLower(strings.TrimSpace(http.DetectContentType(bytes)))
+	if strings.HasPrefix(detected, "image/") {
+		return detected
+	}
+	return imageMime("png")
 }
 
 func downloadImage(ctx context.Context, client *http.Client, imageURL, fallbackMime string) ([]byte, string, error) {
