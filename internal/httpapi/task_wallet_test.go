@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -234,6 +235,87 @@ func TestImageEditMultipartUsesImageContentTypesForInputsAndMask(t *testing.T) {
 			"data:application/octet-stream;base64," + pngB64,
 		},
 		MaskDataURL: "data:application/octet-stream;base64," + pngB64,
+	})
+	if err != nil {
+		t.Fatalf("call image service: %v", err)
+	}
+}
+
+func TestNewAPIImageEditMultipartKeepsMaskAndImageOptions(t *testing.T) {
+	const pngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+	fields := map[string]string{}
+	var imageContentType string
+	var maskContentType string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/edits" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("multipart reader: %v", err)
+		}
+		for {
+			part, err := reader.NextPart()
+			if err != nil {
+				break
+			}
+			switch part.FormName() {
+			case "image[]":
+				imageContentType = part.Header.Get("Content-Type")
+			case "mask":
+				maskContentType = part.Header.Get("Content-Type")
+			default:
+				bytes, err := io.ReadAll(part)
+				if err != nil {
+					t.Fatalf("read field %s: %v", part.FormName(), err)
+				}
+				fields[part.FormName()] = string(bytes)
+			}
+			_ = part.Close()
+		}
+		if fields["output_format"] != "png" {
+			t.Fatalf("output_format = %q", fields["output_format"])
+		}
+		if fields["moderation"] != "auto" {
+			t.Fatalf("moderation = %q", fields["moderation"])
+		}
+		if fields["quality"] != "auto" {
+			t.Fatalf("quality = %q", fields["quality"])
+		}
+		if _, ok := fields["aspect_ratio"]; ok {
+			t.Fatalf("unexpected aspect_ratio for New API request: %#v", fields)
+		}
+		if imageContentType != "image/png" {
+			t.Fatalf("image[] content-type = %q", imageContentType)
+		}
+		if maskContentType != "image/png" {
+			t.Fatalf("mask content-type = %q", maskContentType)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"data": []map[string]any{{"b64_json": base64.StdEncoding.EncodeToString([]byte("ok"))}},
+		})
+	}))
+	defer upstream.Close()
+
+	server := New(config.Config{ProviderSecret: "test-provider-secret"}, nil, nil, nil)
+	apiKeyCiphertext, err := server.encryptSecret("test-key")
+	if err != nil {
+		t.Fatalf("encrypt api key: %v", err)
+	}
+
+	_, err = server.callImageService(context.Background(), serviceProfileRow{
+		APIBaseURL:       upstream.URL + "/v1",
+		APIKeyCiphertext: apiKeyCiphertext,
+		Model:            "gpt-image-2",
+		APIMode:          "images",
+	}, taskPayload{
+		Prompt: "edit",
+		Params: map[string]any{"size": "1024x1024"},
+		InputImageDataURLs: []string{
+			"data:image/png;base64," + pngB64,
+		},
+		MaskDataURL: "data:image/png;base64," + pngB64,
 	})
 	if err != nil {
 		t.Fatalf("call image service: %v", err)
